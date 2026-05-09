@@ -1,0 +1,17 @@
+{
+  "name": "Claudio Music",
+  "short_name": "Claudio",
+  "description": "Local-first AI music recommendation and playback app.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08080d",
+  "theme_color": "#090911",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

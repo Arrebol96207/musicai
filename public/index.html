@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#090911">
+    <title>Claudio Music</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=9">
+  </head>
+  <body>
+    <main class="shell" id="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="avatar">C</div>
+          <div>
+            <strong>Claudio</strong>
+            <span>AI Music</span>
+          </div>
+        </div>
+
+        <div class="theme-toggle" aria-label="主题切换">
+          <button class="theme-choice active" data-theme="dark" type="button">DARK</button>
+          <button class="theme-choice" data-theme="light" type="button">LIGHT</button>
+        </div>
+
+        <div class="clock-mini" id="clockMini">--:--</div>
+      </header>
+
+      <section class="hero">
+        <div class="digital-clock" id="digitalClock" aria-label="当前时间">--:--</div>
+        <div class="date" id="dateText">----</div>
+      </section>
+
+      <section class="now-card" aria-label="正在播放">
+        <div class="cover" id="coverArt">
+          <span class="music-note">♪</span>
+        </div>
+        <div class="now-copy">
+          <p class="eyebrow">NOW PLAYING</p>
+          <h1 id="trackTitle">载入中</h1>
+          <p id="trackArtist">Claudio Music</p>
+        </div>
+        <div class="on-air" id="statusPill">READY</div>
+      </section>
+
+      <section class="playlist-head">
+        <h2>播放列表 <span>▶</span></h2>
+        <p id="queueCount">0 首</p>
+      </section>
+
+      <section class="transport" aria-label="播放器">
+        <div class="playing-bars" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+
+        <div class="track-meta">
+          <strong id="transportTitle">-</strong>
+          <span id="transportState">READY</span>
+        </div>
+
+        <div class="controls">
+          <button class="icon-button" id="prevBtn" type="button" aria-label="上一首">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zM9 12l9-6v12z"/></svg>
+          </button>
+          <button class="play-button" id="playBtn" type="button" aria-label="播放或暂停">
+            <svg id="playIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <button class="icon-button" id="nextBtn" type="button" aria-label="下一首">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg>
+          </button>
+          <button class="icon-button" id="stopBtn" type="button" aria-label="停止">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
+          </button>
+          <button class="icon-button" id="likeBtn" type="button" aria-label="喜欢">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.35-9.25-8.75C1.1 9.03 2.8 5.5 6.25 5.5c1.95 0 3.22 1.05 3.95 2.05C10.93 6.55 12.2 5.5 14.15 5.5c3.45 0 5.15 3.53 3.5 6.75C15 16.65 12 21 12 21z"/></svg>
+          </button>
+        </div>
+
+        <button class="hide-button" id="hideQueueBtn" type="button">HIDE</button>
+
+        <label class="volume">
+          <span>VOL</span>
+          <input id="volumeSlider" type="range" min="0" max="1" step="0.01" value="0.68">
+        </label>
+      </section>
+
+      <div class="progress-row">
+        <span id="elapsedTime">0:00</span>
+        <input id="progressSlider" type="range" min="0" max="100" value="0" aria-label="播放进度">
+        <span id="durationTime">0:00</span>
+      </div>
+
+      <section class="queue-panel" id="queuePanel" aria-label="队列">
+        <div class="panel-title">
+          <span>NEXT UP</span>
+          <strong id="nextCount">0 首</strong>
+        </div>
+        <ol id="queueList"></ol>
+      </section>
+
+      <section class="ai-card" aria-label="DeepSeek 设置">
+        <div class="panel-title">
+          <span>DEEPSEEK</span>
+          <strong id="aiStatus">未连接</strong>
+        </div>
+        <form class="ai-settings" id="aiSettings">
+          <label>
+            <span>API Key</span>
+            <input id="deepseekKey" type="password" autocomplete="off" placeholder="sk-...">
+          </label>
+          <label>
+            <span>模型</span>
+            <input id="deepseekModel" autocomplete="off" value="deepseek-v4-flash">
+          </label>
+          <label>
+            <span>接口地址</span>
+            <input id="deepseekBase" autocomplete="off" value="https://api.deepseek.com">
+          </label>
+          <div class="ai-actions">
+            <button type="submit">保存</button>
+            <button id="clearAiBtn" type="button">清除</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="chat-card" aria-label="AI 对话">
+        <div class="section-title">
+          <span class="dot"></span>
+          <h2>点歌和推荐</h2>
+        </div>
+        <div class="messages" id="messages"></div>
+      </section>
+
+      <form class="composer" id="composer">
+        <input id="messageInput" autocomplete="off" placeholder="告诉 Claudio 你想听什么歌、歌手、心情或风格">
+        <button type="submit" aria-label="发送">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4l18 8-18 8 3-7 8-1-8-1z"/></svg>
+        </button>
+      </form>
+
+      <section class="chips" aria-label="快捷点歌">
+        <button type="button" data-prompt="推荐几首适合现在的歌">推荐音乐</button>
+        <button type="button" data-prompt="播放 lofi chill">播放 Lofi</button>
+        <button type="button" data-prompt="播放 Billie Eilish">点歌 Billie</button>
+        <button type="button" data-prompt="来点华语流行">华语流行</button>
+        <button type="button" data-prompt="推荐几首适合专注写代码的歌">专注</button>
+        <button type="button" data-prompt="换个心情，放松一点">放松</button>
+      </section>
+
+      <footer class="footer">
+        <span>CLAUDIO MUSIC</span>
+        <span>Audius / Deezer / iTunes / Local Files | 曲库 <strong id="libraryCount">0</strong> 首</span>
+      </footer>
+    </main>
+
+    <script src="/app.js?v=9" defer></script>
+  </body>
+</html>
