@@ -1,0 +1,23 @@
+{
+  "name": "claudio-music",
+  "version": "1.0.0",
+  "description": "A local-first AI music recommendation and playback PWA.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check public/service-worker.js && node --check scripts/smoke.js && node --check scripts/smoke-http.js",
+    "smoke": "node scripts/smoke.js",
+    "smoke:http": "node scripts/smoke-http.js",
+    "test": "npm run check && npm run smoke && npm run smoke:http",
+    "verify": "npm test"
+  },
+  "keywords": [
+    "pwa",
+    "music",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "private": true
+}

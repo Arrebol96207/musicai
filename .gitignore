@@ -1,0 +1,43 @@
+﻿# Secrets
+.env
+.env.*
+
+# Runtime logs and temporary files
+*.log
+*.tmp
+*.bak
+*.old
+.claudio-*.log
+.netease-*.log
+
+# Local user profile and runtime state
+user/profile.json
+
+# Dependencies
+node_modules/
+
+# Local user-owned audio files
+music/*
+!music/README.md
+
+# Local notes and non-project material
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.md.bak
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+.upload-staging-test/
+upload-staging/
+upload-git-meta/
+
