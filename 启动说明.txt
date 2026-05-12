@@ -1,19 +1,16 @@
-双击 一键启动.bat 即可启动项目。
+双击 ClaudioMusic.exe 即可启动项目。
 
 它会自动完成这些事：
 1. 查找 Node.js。
-2. 如果后端已经在运行，会直接复用现有服务。
-3. 如果后端没运行，会自动启动 server.js。
-4. 如果端口被占用，会自动尝试 3000 到 3010。
-5. 打开浏览器进入 Claudio Music 页面。
+2. 启动 server.js。
+3. 如果端口被占用，会自动尝试 3000 到 3010。
+4. 打开浏览器进入 Claudio Music 页面。
 
 页面里可以直接填写 DeepSeek API Key：
 - 模型默认：deepseek-v4-flash
 - 接口地址默认：https://api.deepseek.com
 
-如果浏览器没有自动打开，请访问启动脚本显示的地址。
+如果浏览器没有自动打开，请访问启动器显示的地址。
 
 如果启动失败，请在此目录运行：
-npm start
-
-如果你安装了 .NET 8 SDK，也可以运行 scripts\build-launcher.ps1 重新生成 ClaudioMusic.exe。
+node server.js

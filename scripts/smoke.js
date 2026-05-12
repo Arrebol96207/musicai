@@ -13,9 +13,9 @@ const required = [
   "launcher/ClaudioMusicLauncher.cs",
   "launcher/ClaudioMusicLauncher.csproj",
   "scripts/build-launcher.ps1",
-  "scripts/start-launcher.ps1",
-  "scripts/smoke-http.js",
+  "scripts/start-and-open.ps1",
   "一键启动.bat",
+  "scripts/smoke-http.js",
   "data/tracks.json",
   "README.md",
   ".gitignore"
@@ -42,8 +42,8 @@ const serviceWorker = read("public/service-worker.js");
 const launcher = read("launcher/ClaudioMusicLauncher.cs");
 const launcherProject = read("launcher/ClaudioMusicLauncher.csproj");
 const launcherBuild = read("scripts/build-launcher.ps1");
-const startLauncher = read("scripts/start-launcher.ps1");
-const oneClickLauncher = read("一键启动.bat");
+const oneClickBat = read("一键启动.bat");
+const oneClickPs = read("scripts/start-and-open.ps1");
 const styles = read("public/styles.css");
 const gitignore = read(".gitignore");
 const readme = read("README.md");
@@ -90,15 +90,16 @@ check("Launcher accepts any healthy Claudio version", launcher.includes("IsClaud
 check("Launcher has no stale v9 checks", !launcher.includes("v=9") && !launcher.includes('"appVersion":"9"'));
 check("Launcher project targets Windows .NET", launcherProject.includes("<TargetFramework>net8.0-windows</TargetFramework>") && launcherProject.includes("<AssemblyName>ClaudioMusic</AssemblyName>"));
 check("Launcher build script copies root exe", launcherBuild.includes("dotnet build") && launcherBuild.includes("Copy-Item") && launcherBuild.includes("ClaudioMusic.exe"));
-check("One-click launcher delegates to PowerShell script", oneClickLauncher.includes("scripts\\start-launcher.ps1") && oneClickLauncher.includes("ExecutionPolicy Bypass"));
-check("PowerShell launcher starts backend and opens browser", startLauncher.includes("Start-Process -FilePath $node") && startLauncher.includes("Start-Process $url") && startLauncher.includes("Find-ClaudioPort"));
-check("PowerShell launcher reuses existing backend", startLauncher.includes("$existingPort = Find-ClaudioPort") && startLauncher.includes("Claudio Music is already running"));
 
 check("HTML Chinese text is readable", html.includes("播放列表") && html.includes("猜你喜欢") && html.includes("我的收藏"));
 check("HTML includes top status strip", html.includes("status-strip") && html.includes("serviceStatus") && html.includes("networkStatus") && html.includes("cacheStatus") && html.includes("installBtn"));
 check("Client Chinese text is readable", app.includes("告诉 Claudio 你想听什么") && app.includes("这首歌没有可播放地址"));
 check("README Chinese examples are readable", readme.includes("推荐几首适合现在的歌") && readme.includes("播放 Billie Eilish"));
 check("README documents launcher rebuild", readme.includes("Rebuild Launcher") && readme.includes("build-launcher.ps1"));
+check("README documents one-click start", readme.includes("一键启动.bat") && readme.includes("opens the browser automatically"));
+check("One-click batch delegates to PowerShell launcher", oneClickBat.includes("scripts\\start-and-open.ps1") && oneClickBat.includes("npm install") && oneClickBat.includes("where node"));
+check("One-click PowerShell starts server and opens browser", oneClickPs.includes("Start-Process -FilePath $Node.Source") && oneClickPs.includes("server.js") && oneClickPs.includes("Start-Process $url"));
+check("One-click PowerShell probes Claudio health", oneClickPs.includes("/api/health") && oneClickPs.includes("ClaudioMusic") && oneClickPs.includes("Get-ClaudioHealthUrl"));
 check("Manifest names the app", manifest.name === "Claudio Music" || manifest.short_name === "Claudio");
 
 check("Client uses a real audio element", app.includes("new Audio()"));
@@ -156,14 +157,18 @@ check("Client has retry by status code", app.includes("[502, 503, 504].includes(
 check("Client has phased loading feedback", app.includes("setLoadingPhase") && app.includes("正在解析意图"));
 check("Client hides remove button for local tracks", app.includes("const canRemove = track.source !== \"local\""));
 check("Client has audio failure recovery", app.includes("function handlePlaybackFailure") && app.includes("await nextTrack(true)"));
+check("Client defines debug flag before Media Session catches", app.includes("const debugOn = isDebugEnabled()") && app.includes("if (debugOn) console.warn"));
 check("Client supports queue clear undo toast action", app.includes("function restoreClearedQueue") && app.includes("toast-action"));
+check("Client restores cleared queue through restore endpoint", app.includes("function setLoading(") && app.includes("api(\"/api/queue/restore\"") && !app.includes("body: JSON.stringify({ track, playNow: false })"));
 check("Client limits long queue renders", app.includes("QUEUE_RENDER_LIMIT") && app.includes("visibleQueue = queue.slice"));
 check("Server supports audio range streaming", server.includes("function serveAudioFile") && server.includes("Content-Range") && server.includes("Accept-Ranges"));
 check("Server exposes lightweight now state", server.includes("function publicNowState") && server.includes("/api/now-lite"));
 check("Server broadcasts state to SSE clients", server.includes("const sseClients = new Set()") && server.includes("function broadcastState") && server.includes("ensureSseHeartbeat"));
 check("Server caches music search results", server.includes("const searchCache = new Map()") && server.includes("SEARCH_CACHE_TTL_MS") && server.includes("setSearchCache(cacheKey"));
 check("Server limits recommendation concurrency", server.includes("RECOMMENDATION_CONCURRENCY") && server.includes("runLimited(queries"));
+check("Server restores cleared queue from snapshots", server.includes("/api/queue/restore") && server.includes("sanitizeTrackSnapshot(track)") && server.includes('reason: "restore"'));
 check("Server protects AI admin endpoints", server.includes("function requireAdmin") && server.includes("CLAUDIO_ADMIN_TOKEN") && server.includes("x-claudio-token"));
+check("Server defaults to loopback bind", server.includes("const HOST = process.env.CLAUDIO_HOST || process.env.HOST || \"127.0.0.1\"") && server.includes("server.listen(activePort, HOST)"));
 
 check("Server uses Audius", server.includes("api.audius.co/v1"));
 check("Server uses Deezer", server.includes("api.deezer.com"));

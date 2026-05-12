@@ -87,6 +87,7 @@ async function main() {
     if (!appVersion || appVersion === "16") fail("Health endpoint returns automatic app version");
     if (!frontendVersion || frontendVersion === "16") fail("Health endpoint returns automatic frontend version");
     if (!health.json?.requestId) fail("Health endpoint returns requestId");
+    if (health.json?.host !== "127.0.0.1") fail("Server defaults to loopback host");
 
     const now = await request("/api/now-lite");
     if (now.status !== 200) fail("Now-lite endpoint returns 200");
@@ -97,9 +98,6 @@ async function main() {
     const html = await request("/");
     if (html.status !== 200 || !html.body.includes(`/app.js?v=${frontendVersion}`)) fail("HTML returns auto cache-busted app asset");
     if (html.body.includes("__CLAUDIO_FRONTEND_VERSION__")) fail("HTML version token is rendered");
-
-    const staleHome = await request("/?v=9");
-    if (staleHome.status !== 302 || staleHome.headers.location !== "/") fail("Stale home version query redirects to clean URL");
 
     const serviceWorker = await request("/service-worker.js");
     if (serviceWorker.status !== 200 || !serviceWorker.body.includes(`claudio-music-${frontendVersion}`)) fail("Service worker cache uses frontend version");
@@ -116,12 +114,45 @@ async function main() {
     if (malformed.json?.code !== "INVALID_URL_ENCODING") fail("Malformed URL reports INVALID_URL_ENCODING");
     if (!malformed.json?.requestId) fail("Malformed URL response includes requestId");
 
+    const restore = await request("/api/queue/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tracks: [{
+          id: "smoke-restore-track",
+          title: "Smoke Restore",
+          artist: "Smoke",
+          duration: 30,
+          source: "itunes",
+          audioUrl: "https://example.com/preview.mp3"
+        }]
+      })
+    });
+    if (restore.status !== 200 || restore.json?.reason !== "restore" || restore.json?.queueSize < 1) fail("Queue restore endpoint restores saved snapshots");
+
+    const clear = await request("/api/queue/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    if (clear.status !== 200 || clear.json?.reason !== "clear") fail("Queue clear endpoint still clears restored queue");
+
     const aiConfig = await request("/api/ai/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey: "x" })
     });
     if (aiConfig.status !== 401 || aiConfig.json?.code !== "UNAUTHORIZED") fail("AI config endpoint requires admin token");
+
+    const authedAiConfig = await request("/api/ai/config", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-claudio-token": "smoke-token"
+      },
+      body: JSON.stringify({ apiKey: "x", model: "deepseek-v4-flash", apiBase: "https://api.deepseek.com" })
+    });
+    if (authedAiConfig.status !== 200 || authedAiConfig.json?.ai?.enabled !== true) fail("AI config endpoint accepts valid admin token");
 
     if (!output.includes("#")) fail("Request log includes requestId marker");
 

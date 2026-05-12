@@ -75,6 +75,16 @@ let mediaFailureTrackId = null;
 let lastClearedQueue = null;
 const QUEUE_RENDER_LIMIT = 80;
 
+function isDebugEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).has("debug") || window.localStorage?.getItem("claudioDebug") === "1";
+  } catch {
+    return false;
+  }
+}
+
+const debugOn = isDebugEnabled();
+
 const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 
 const player = {
@@ -772,6 +782,17 @@ function setBusy(isBusy) {
   }
 }
 
+function setLoading(isLoading, text = "") {
+  if (!els.loadingOverlay) return;
+  if (isLoading) {
+    els.loadingOverlay.removeAttribute("hidden");
+    setLoadingPhase(text);
+  } else {
+    setLoadingPhase(null);
+    els.loadingOverlay.setAttribute("hidden", "");
+  }
+}
+
 function setLoadingPhase(text) {
   if (!els.loadingOverlay) return;
   const existing = els.loadingOverlay.querySelector(".loading-text");
@@ -812,15 +833,11 @@ async function restoreClearedQueue() {
   if (!lastClearedQueue?.length) return;
   try {
     setLoading(true, "正在恢复队列...");
-    let restored = null;
-    for (const track of lastClearedQueue) {
-      if (!track?.title) continue;
-      restored = await api("/api/music/play", {
-        method: "POST",
-        body: JSON.stringify({ track, playNow: false })
-      }, 0);
-    }
-    if (restored) render(restored);
+    const restored = await api("/api/queue/restore", {
+      method: "POST",
+      body: JSON.stringify({ tracks: lastClearedQueue })
+    }, 0);
+    render(restored);
     lastClearedQueue = null;
     showToast("队列已恢复", "success");
   } catch (error) {

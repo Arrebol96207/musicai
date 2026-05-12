@@ -1,4 +1,4 @@
-# Claudio Music
+﻿# Claudio Music
 
 Claudio Music is a local-first web app for music recommendation and playback. It plays real audio from online music APIs or user-owned local files. It does not generate synthetic audio and does not use radio streams unless you explicitly ask for radio.
 
@@ -63,6 +63,14 @@ It contains:
 ## Start
 
 Double-click:
+
+```text
+一键启动.bat
+```
+
+This script checks Node.js, installs dependencies when needed, starts the server, detects the active port, and opens the browser automatically.
+
+If you have rebuilt the Windows launcher, you can also double-click:
 
 ```text
 ClaudioMusic.exe
@@ -291,3 +299,4 @@ node --check server.js
 node --check public\app.js
 node scripts\smoke.js
 ```
+

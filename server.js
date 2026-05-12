@@ -73,6 +73,7 @@ const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const SEARCH_CACHE_LIMIT = 120;
 const RECOMMENDATION_CONCURRENCY = 2;
 const ADMIN_TOKEN = process.env.CLAUDIO_ADMIN_TOKEN || "";
+const HOST = process.env.CLAUDIO_HOST || process.env.HOST || "127.0.0.1";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -1331,6 +1332,7 @@ async function handleApi(req, res, url) {
       displayName: "Claudio Music",
       appVersion: APP_VERSION,
       frontendVersion: FRONTEND_VERSION,
+      host: HOST,
       queueSize: queue.length,
       playableQueueSize: playableQueue.length,
       dynamicTracks: state.dynamicTracks.length,
@@ -1522,6 +1524,33 @@ async function handleApi(req, res, url) {
     state.playing = false;
     state.startedAt = Date.now();
     return sendJson(res, 200, publicState({ reason: "clear" }));
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/queue/restore") {
+    try {
+      const body = await getBody(req);
+      const tracks = Array.isArray(body.tracks) ? body.tracks : [];
+      if (!tracks.length) throw validationError({ tracks: "请提供要恢复的队列。" });
+
+      const restored = tracks
+        .map(track => sanitizeTrackSnapshot(track))
+        .filter(Boolean)
+        .slice(0, 200);
+      if (!restored.length) throw validationError({ tracks: "没有可恢复的歌曲。" });
+
+      state.dynamicTracks = restored
+        .filter(track => track.source !== "local")
+        .map(track => withRuntime(track))
+        .filter(Boolean);
+      state.hideLocalTracks = false;
+      state.shuffledIndices = null;
+      state.trackIndex = 0;
+      state.playing = false;
+      state.startedAt = Date.now();
+      return sendJson(res, 200, publicState({ reason: "restore", restored: restored.length }));
+    } catch (error) {
+      return sendError(res, error.status || 400, error);
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/api/music/search") {
@@ -1772,18 +1801,7 @@ function serveAudioFile(req, res, filePath, cacheControl = "public, max-age=8640
   });
 }
 
-function redirect(res, location) {
-  res.writeHead(302, {
-    Location: location,
-    "Cache-Control": "no-store"
-  });
-  res.end();
-}
-
 function serveStatic(req, res, url) {
-  if ((url.pathname === "/" || url.pathname === "/index.html") && url.searchParams.has("v")) {
-    return redirect(res, url.pathname === "/index.html" ? "/index.html" : "/");
-  }
   const filePath = safePublicPath(url.pathname);
   if (!filePath) return sendText(res, 403, "Forbidden");
   fs.stat(filePath, error => {
@@ -1849,7 +1867,7 @@ let activePort = PORT;
 server.on("error", error => {
   if (error.code === "EADDRINUSE" && activePort < PORT + 10) {
     activePort += 1;
-    server.listen(activePort, "0.0.0.0");
+    server.listen(activePort, HOST);
     return;
   }
   console.error(error);
@@ -1860,7 +1878,7 @@ server.on("listening", () => {
   console.log(`Claudio Music is ready at http://127.0.0.1:${activePort}/`);
 });
 
-server.listen(activePort, "0.0.0.0");
+server.listen(activePort, HOST);
 
 process.on("SIGINT", () => { saveProfile(); process.exit(0); });
 process.on("SIGTERM", () => { saveProfile(); process.exit(0); });
