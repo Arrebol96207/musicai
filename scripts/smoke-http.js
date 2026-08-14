@@ -504,11 +504,26 @@ async function main() {
     if (!sse.firstChunk.includes("event: now")) fail("SSE stream sends initial state");
     if (!hasSecurityHeaders(sse.res)) fail("SSE stream includes baseline security headers");
     if (sse.res.headers["access-control-allow-origin"]) fail("SSE stream does not expose live state cross-origin");
+    let sseTail = sse.firstChunk;
+    const sawShutdown = new Promise(resolve => {
+      sse.res.on("data", chunk => {
+        sseTail += String(chunk);
+        if (sseTail.includes("event: shutdown")) resolve(true);
+      });
+      const settle = () => resolve(sseTail.includes("event: shutdown"));
+      sse.res.once("end", settle);
+      sse.res.once("close", settle);
+    });
     stopped = true;
     const exiting = waitForExit();
     child.kill("SIGTERM");
     const exit = await exiting;
     if (!exit || (exit.code !== 0 && exit.signal !== "SIGTERM")) fail("Server exits on SIGTERM with an open SSE client");
+    const gotShutdownEvent = await Promise.race([
+      sawShutdown,
+      new Promise(resolve => setTimeout(() => resolve(false), 1500))
+    ]);
+    if (process.platform !== "win32" && !gotShutdownEvent) fail("SSE client receives shutdown event on graceful exit");
 
     if (!output.includes("#")) fail("Request log includes requestId marker");
 

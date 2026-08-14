@@ -97,7 +97,7 @@ check("README start URL does not pin a stale version", readme.includes("http://1
 check("Launcher uses unpinned start URL", !launcher.includes("private const string AppVersion") && !launcher.includes("VersionQuery"));
 check("Launcher accepts any healthy Claudio version", launcher.includes("IsClaudioHealth") && !launcher.includes("HasCurrentAppVersion"));
 check("Launcher has no stale v9 checks", !launcher.includes("v=9") && !launcher.includes('"appVersion":"9"'));
-check("Launcher project targets Windows .NET", launcherProject.includes("<TargetFramework>net8.0-windows</TargetFramework>") && launcherProject.includes("<AssemblyName>ClaudioMusic</AssemblyName>"));
+check("Launcher project targets .NET 8", launcherProject.includes("<TargetFramework>net8.0</TargetFramework>") && launcherProject.includes("<AssemblyName>ClaudioMusic</AssemblyName>"));
 check("Launcher build script copies root exe", launcherBuild.includes("dotnet build") && launcherBuild.includes("Copy-Item") && launcherBuild.includes("ClaudioMusic.exe"));
 
 check("HTML Chinese text is readable", html.includes("播放列表") && html.includes("猜你喜欢") && html.includes("我的收藏"));
@@ -266,7 +266,7 @@ check("Server uses cheap DeepSeek model default", server.includes("deepseek-v4-f
 check("Server disables DeepSeek thinking", server.includes('thinking: { type: "disabled" }'));
 check("Server uses user profile in recommendations", server.includes("profileSummary") && server.includes("preferenceQueries"));
 check("Radio is explicit fallback only", server.includes("wantsRadio") && server.includes("explicit-radio-only"));
-check("User profile is ignored by git", gitignore.includes("user/profile.json"));
+check("User profile is ignored by git", gitignore.includes("user/"));
 check("Local music files are ignored by git", gitignore.includes("music/*") && gitignore.includes("!music/README.md"));
 check("Track library is JSON array", Array.isArray(tracks));
 

@@ -305,7 +305,7 @@ curl -X POST http://127.0.0.1:3000/api/queue/remove -H "Content-Type: applicatio
 | `DEEPSEEK_KEY_REQUIRED` | 500 | DeepSeek API Key 未配置 |
 | `ADMIN_TOKEN_REQUIRED` | 500 | 已开启管理员授权，但未配置 `CLAUDIO_ADMIN_TOKEN` |
 | `NO_PLAYABLE_MUSIC` | 502 | 所有音乐源均无可用结果 |
-| `UPSTREAM_TIMEOUT` | 502 | 上游音乐源请求超时 |
+| `UPSTREAM_TIMEOUT` | 504 | 上游音乐源请求超时 |
 | `UPSTREAM_EMPTY` | 502 | 上游音乐源返回空结果 |
 | `SERVER_ERROR` | 500 | 服务器内部错误 |
 

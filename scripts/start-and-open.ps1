@@ -9,7 +9,7 @@ $Root = if ($PSScriptRoot) {
 Set-Location $Root
 
 function Get-ClaudioHealthUrl {
-  param([int]$StartPort = 3000, [int]$Count = 30)
+  param([int]$StartPort = 3000, [int]$Count = 11)
 
   for ($port = $StartPort; $port -lt ($StartPort + $Count); $port++) {
     $healthUrl = "http://127.0.0.1:$port/api/health"

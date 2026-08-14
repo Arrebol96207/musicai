@@ -859,7 +859,7 @@ async function fetchJson(url, timeoutMs = 12000) {
         "User-Agent": "ClaudioMusic/1.0"
       }
     });
-    const json = await response.json().catch(() => ({}));
+    const json = await response.json();
     if (!response.ok) throw createAppError(json.error?.message || `HTTP ${response.status}`, 502, "UPSTREAM_HTTP_ERROR");
     return json;
   } catch (error) {
@@ -1362,7 +1362,8 @@ function cacheKeyForSearch(query, options = {}) {
     preferLocal: Boolean(options.preferLocal),
     allowRadio: Boolean(options.allowRadio),
     avoidLive: Boolean(options.avoidLive),
-    avoidElectronic: Boolean(options.avoidElectronic)
+    avoidElectronic: Boolean(options.avoidElectronic),
+    avoid: stringList(userProfile.preferences.avoid).join(",")
   });
 }
 
@@ -1398,16 +1399,27 @@ async function runLimited(items, limit, worker) {
   return results;
 }
 
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(createAppError("上游音乐服务请求超时。", 504, "UPSTREAM_TIMEOUT")), ms);
+    promise.then(
+      value => { clearTimeout(timer); resolve(value); },
+      error => { clearTimeout(timer); reject(error); }
+    );
+  });
+}
+
 async function playableFromQuery(query, options = {}) {
   const cacheKey = cacheKeyForSearch(query, options);
   const cached = getSearchCache(cacheKey);
   if (cached) return cached;
   const failures = [];
+  const totalBudgetMs = Math.min(20000, Math.max(8000, REQUEST_TIMEOUT_MS - 2000));
 
   const searchTasks = [
     { name: "Audius", fn: async () => {
       const audius = musicCandidates(await searchAudius(query, 8), query, options);
-      for (const track of audius.slice(0, 5)) {
+      for (const track of audius.slice(0, 3)) {
         try { return await resolveAudius(track); } catch (e) { failures.push(sourceFailure("Audius", e)); }
       }
       if (!audius.length) failures.push(sourceFailure("Audius", createAppError("Audius 没有匹配结果。", 502, "UPSTREAM_EMPTY")));
@@ -1427,7 +1439,7 @@ async function playableFromQuery(query, options = {}) {
     }}
   ];
 
-  const results = await Promise.allSettled(searchTasks.map(t => t.fn()));
+  const results = await Promise.allSettled(searchTasks.map(t => withTimeout(t.fn(), totalBudgetMs)));
   for (const r of results) {
     if (r.status === "fulfilled") {
       setSearchCache(cacheKey, r.value);
@@ -1456,7 +1468,10 @@ function addToQueue(track, playNow = true, context = "queue") {
   const runtime = withRuntime(track);
   const existing = state.dynamicTracks.findIndex(item => item.id === runtime.id);
   if (existing >= 0) state.dynamicTracks[existing] = runtime;
-  else state.dynamicTracks.unshift(runtime);
+  else {
+    state.dynamicTracks.unshift(runtime);
+    state.shuffledIndices = null;
+  }
   if (state.dynamicTracks.length > DYNAMIC_TRACKS_LIMIT) {
     const currentId = currentTrack()?.id;
     state.dynamicTracks = state.dynamicTracks.slice(0, DYNAMIC_TRACKS_LIMIT);
@@ -2359,3 +2374,12 @@ function shutdown(signal) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+process.on("unhandledRejection", error => {
+  console.error("Unhandled promise rejection:", error);
+});
+
+process.on("uncaughtException", error => {
+  console.error("Uncaught exception:", error);
+  shutdown("uncaughtException");
+});

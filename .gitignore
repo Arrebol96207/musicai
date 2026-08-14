@@ -1,4 +1,4 @@
-﻿# Secrets
+# Secrets
 .env
 .env.*
 
@@ -9,9 +9,10 @@
 *.old
 .claudio-*.log
 .netease-*.log
+.tmp/
 
 # Local user profile and runtime state
-user/profile.json
+user/
 
 # Dependencies
 node_modules/
@@ -36,6 +37,7 @@ music/*
 Thumbs.db
 .vscode/
 .idea/
+.trae/
 
 .upload-staging-test/
 upload-staging/

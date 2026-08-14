@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $Root "launcher\ClaudioMusicLauncher.csproj"
-$Output = Join-Path $Root "launcher\bin\Release\net8.0-windows\win-x64\ClaudioMusic.exe"
+$Output = Join-Path $Root "launcher\bin\Release\net8.0\win-x64\ClaudioMusic.exe"
 $Target = Join-Path $Root "ClaudioMusic.exe"
 
 $SdkList = dotnet --list-sdks 2>$null

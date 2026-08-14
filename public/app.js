@@ -90,6 +90,9 @@ let backendOriginHealthy = false;
 let latestHealth = null;
 let localOriginRecovery = null;
 let isDraggingProgress = false;
+let isDraggingVolume = false;
+let progressTicker = null;
+const localSystemMessages = [];
 let pauseElapsed = null;
 let queueSearchTerm = "";
 let shortcutReturnFocus = null;
@@ -316,7 +319,7 @@ async function fetchWithTimeout(path, options = {}, timeoutMs = API_TIMEOUT_MS) 
   try {
     return await fetch(path, {
       ...options,
-      signal: options.signal || controller.signal
+      signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
     });
   } finally {
     clearTimeout(timer);
@@ -405,10 +408,9 @@ function validationSummary(error) {
 
 function showSystemMessage(text) {
   if (!state) return;
-  const messages = Array.isArray(state.messages) ? state.messages.slice() : [];
-  messages.push({ role: "ai", at: clockStamp(), text });
-  state = { ...state, messages };
-  renderMessages(messages);
+  localSystemMessages.push({ role: "ai", at: clockStamp(), text });
+  if (localSystemMessages.length > 5) localSystemMessages.shift();
+  renderMessages(Array.isArray(state.messages) ? state.messages : []);
 }
 
 function showToast(text, type = "info", action) {
@@ -732,6 +734,24 @@ function playbackState(override) {
   return "PAUSED";
 }
 
+function ensureProgressTicker() {
+  const needsTicker = Boolean(state?.status === "ON AIR" && (!player.active || player.el.paused));
+  if (needsTicker && !progressTicker) {
+    progressTicker = setInterval(() => {
+      if (state?.status === "ON AIR" && (!player.active || player.el.paused)) {
+        localElapsed += 0.25;
+        updateProgress();
+      } else {
+        clearInterval(progressTicker);
+        progressTicker = null;
+      }
+    }, 250);
+  } else if (!needsTicker && progressTicker) {
+    clearInterval(progressTicker);
+    progressTicker = null;
+  }
+}
+
 function updatePlaybackUi(override) {
   const track = state?.now;
   const label = playbackState(override);
@@ -742,6 +762,7 @@ function updatePlaybackUi(override) {
   els.transportState.textContent = `${label} · ${providerLabel(track)}`;
   els.body.classList.toggle("paused", !playing);
   updateLikeUi();
+  ensureProgressTicker();
 }
 
 function renderMessage(message) {
@@ -754,10 +775,16 @@ function renderMessage(message) {
   return wrapper;
 }
 
+let lastMessagesSignature = "";
 function renderMessages(messages) {
+  const all = [...(messages || []), ...localSystemMessages];
+  const signature = JSON.stringify(all.map(message => [message.role, message.at, message.text]));
+  if (signature === lastMessagesSignature) return;
+  lastMessagesSignature = signature;
+  const atBottom = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight < 40;
   els.messages.replaceChildren();
-  (messages || []).forEach(message => els.messages.appendChild(renderMessage(message)));
-  els.messages.scrollTop = els.messages.scrollHeight;
+  all.forEach(message => els.messages.appendChild(renderMessage(message)));
+  if (atBottom) els.messages.scrollTop = els.messages.scrollHeight;
 }
 
 function normalizedQueue(data) {
@@ -900,8 +927,10 @@ function render(data) {
   els.queueCount.textContent = queueSearchTerm.trim() ? `${filteredCount}/${queue.length} 首` : `${queue.length} 首`;
   els.nextCount.textContent = queueSearchTerm.trim() ? `匹配 ${filteredCount} 首` : `${Math.max(0, queue.length - 1)} 首`;
   els.libraryCount.textContent = queue.length;
-  els.volumeSlider.value = data.volume ?? 0.68;
-  updateSliderFill(els.volumeSlider, (data.volume ?? 0.68) * 100);
+  if (!isDraggingVolume) {
+    els.volumeSlider.value = data.volume ?? 0.68;
+    updateSliderFill(els.volumeSlider, (data.volume ?? 0.68) * 100);
+  }
   els.durationTime.textContent = formatDuration(track?.duration || 0);
 
   renderAiStatus(data.ai);
@@ -1609,8 +1638,9 @@ els.hideQueueBtn.addEventListener("click", () => {
   els.hideQueueBtn.textContent = els.queuePanel.classList.contains("collapsed") ? "SHOW" : "HIDE";
 });
 
-els.volumeSlider.addEventListener("input", applyVolume);
+els.volumeSlider.addEventListener("input", () => { isDraggingVolume = true; applyVolume(); });
 els.volumeSlider.addEventListener("change", async event => {
+  isDraggingVolume = false;
   const volume = Number(event.target.value);
   try {
     await api("/api/play", {
@@ -1753,13 +1783,6 @@ document.querySelectorAll(".theme-choice").forEach(button => {
     saveSettings({ theme }).catch(error => showSystemMessage(error.message));
   });
 });
-
-setInterval(() => {
-  if (state?.status === "ON AIR" && (!player.active || player.el.paused)) {
-    localElapsed += 0.25;
-    updateProgress();
-  }
-}, 250);
 
 setInterval(updateClock, 1000);
 updateClock();

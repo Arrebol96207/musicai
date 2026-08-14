@@ -96,6 +96,7 @@ namespace ClaudioMusicLauncher
             if (port == 0)
             {
                 Console.WriteLine("The server did not start. Run node server.js in this folder to see the error.");
+                KillStartedServer(serverProcess);
                 Pause();
                 return 1;
             }
@@ -103,6 +104,7 @@ namespace ClaudioMusicLauncher
             if (!IsHealthyClaudioPort(port, 1000))
             {
                 Console.WriteLine("The detected Claudio Music port is no longer responding.");
+                KillStartedServer(serverProcess);
                 Pause();
                 return 1;
             }
@@ -113,6 +115,16 @@ namespace ClaudioMusicLauncher
             OpenUrl(url);
 
             return 0;
+        }
+
+        private static void KillStartedServer(ServerHandle serverProcess)
+        {
+            if (serverProcess == null || serverProcess.Process == null) return;
+            try
+            {
+                if (!serverProcess.Process.HasExited) serverProcess.Process.Kill();
+            }
+            catch { }
         }
 
         private static int OpenReadyPort(int port)

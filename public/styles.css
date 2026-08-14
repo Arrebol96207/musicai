@@ -9,7 +9,7 @@
   --line-strong: rgba(255, 255, 255, 0.1);
   --text: #ffffff;
   --muted: #9ca3af;
-  --dim: #6b7280;
+  --dim: #8b93a5;
   --accent: #8b5cf6;
   --accent-2: #06b6d4;
   --accent-3: #ec4899;
@@ -69,7 +69,7 @@ body.light {
   --line-strong: rgba(0, 0, 0, 0.1);
   --text: #111827;
   --muted: #6b7280;
-  --dim: #9ca3af;
+  --dim: #6b7280;
   --bubble: rgba(99, 102, 241, 0.08);
   --user-bubble: rgba(236, 72, 153, 0.08);
   --shadow: 0 20px 50px -15px rgba(0, 0, 0, 0.12);
