@@ -2,6 +2,14 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const {
+  createAppError,
+  publicErrorMessage,
+  sendJson,
+  sendError,
+  sendText,
+  getBody
+} = require("./lib/http");
 
 const ROOT = __dirname;
 
@@ -27,12 +35,48 @@ function loadEnvFile(filePath) {
 
 if (process.env.CLAUDIO_SKIP_ENV !== "1") loadEnvFile(path.join(ROOT, ".env"));
 
-const PORT = Number(process.env.PORT || 3000);
+const NUMERIC_ENV_STATE = {};
+
+function parseEnvNumber(name, defaultValue, options = {}) {
+  const { min = -Infinity, max = Infinity, integer = false } = options;
+  const fallback = Number(defaultValue);
+  const raw = process.env[name];
+  let value = fallback;
+  let source = "default";
+  let valid = true;
+
+  if (raw != null && raw !== "") {
+    source = "env";
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max || (integer && !Number.isInteger(parsed))) {
+      source = "default";
+      valid = false;
+    } else {
+      value = parsed;
+    }
+  }
+
+  NUMERIC_ENV_STATE[name] = { value, defaultValue: fallback, source, valid };
+  return value;
+}
+
+function publicNumericEnvState(name) {
+  const state = NUMERIC_ENV_STATE[name] || {};
+  return {
+    value: state.value,
+    defaultValue: state.defaultValue,
+    source: state.source || "default",
+    valid: state.valid !== false
+  };
+}
+
+const PORT = parseEnvNumber("PORT", 3000, { min: 1, max: 65535, integer: true });
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = path.join(ROOT, "data");
 const MUSIC_DIR = path.join(ROOT, "music");
 const USER_DIR = path.join(ROOT, "user");
 const PROFILE_PATH = path.join(USER_DIR, "profile.json");
+const PROFILE_BACKUP_DIR = path.join(USER_DIR, "backups");
 
 const AUDIUS_API_BASE = "https://api.audius.co/v1";
 const ITUNES_API_BASE = "https://itunes.apple.com";
@@ -48,6 +92,7 @@ function fileVersion(filePath) {
 }
 
 const APP_NAME = "ClaudioMusic";
+const STARTED_AT = new Date();
 const APP_VERSION = process.env.CLAUDIO_APP_VERSION || fileVersion(__filename);
 const FRONTEND_VERSION = process.env.CLAUDIO_FRONTEND_VERSION || [
   fileVersion(path.join(PUBLIC_DIR, "index.html")),
@@ -60,20 +105,31 @@ const HISTORY_LIMIT = 50;
 const FAVORITE_LIMIT = 200;
 const PREFERENCE_LIMIT = 30;
 const MAX_MESSAGES = 200;
-const DEBUG_ERRORS = process.env.CLAUDIO_DEBUG_ERRORS === "1";
+const DYNAMIC_TRACKS_LIMIT = 200;
+const PROFILE_BACKUP_LIMIT = 5;
+const PROFILE_BACKUP_NAME_RE = /^profile-\d{8}T\d{6}Z(?:-\d+)?\.json$/;
 
 const deepSeekConfig = {
   apiKey: process.env.DEEPSEEK_API_KEY || "",
   apiBase: (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, ""),
   model: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
 };
-const DEEPSEEK_TIMEOUT_MS = Number(process.env.DEEPSEEK_TIMEOUT_MS || 10000);
-const DEEPSEEK_MAX_TOKENS = Number(process.env.DEEPSEEK_MAX_TOKENS || 260);
+const DEEPSEEK_TIMEOUT_MS = parseEnvNumber("DEEPSEEK_TIMEOUT_MS", 10000, { min: 1000, max: 120000, integer: true });
+const DEEPSEEK_MAX_TOKENS = parseEnvNumber("DEEPSEEK_MAX_TOKENS", 260, { min: 1, max: 4000, integer: true });
+const REQUEST_TIMEOUT_MS = parseEnvNumber("CLAUDIO_REQUEST_TIMEOUT_MS", 30_000, { min: 1000, max: 600_000, integer: true });
+const HEADERS_TIMEOUT_MS = parseEnvNumber("CLAUDIO_HEADERS_TIMEOUT_MS", 35_000, { min: 1000, max: 600_000, integer: true });
+const KEEP_ALIVE_TIMEOUT_MS = parseEnvNumber("CLAUDIO_KEEP_ALIVE_TIMEOUT_MS", 5_000, { min: 1000, max: 120_000, integer: true });
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const SEARCH_CACHE_LIMIT = 120;
 const RECOMMENDATION_CONCURRENCY = 2;
 const ADMIN_TOKEN = process.env.CLAUDIO_ADMIN_TOKEN || "";
+const REQUIRE_ADMIN_TOKEN = asBoolean(process.env.CLAUDIO_REQUIRE_ADMIN_TOKEN, false);
 const HOST = process.env.CLAUDIO_HOST || process.env.HOST || "127.0.0.1";
+
+function isLoopbackHostOnly() {
+  const h = (HOST || "").toLowerCase();
+  return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+}
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -92,6 +148,30 @@ const mimeTypes = {
   ".flac": "audio/flac",
   ".webmanifest": "application/manifest+json; charset=utf-8"
 };
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "same-origin",
+  "X-Frame-Options": "DENY",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' https: data:",
+    "media-src 'self' https: data: blob:",
+    "connect-src 'self' http://127.0.0.1:* http://localhost:* https:",
+    "manifest-src 'self'",
+    "worker-src 'self'"
+  ].join("; ")
+};
+const SHORT_STATIC_CACHE = "public, max-age=300";
+const VERSIONED_STATIC_CACHE = "public, max-age=31536000, immutable";
 
 const recommendationSeeds = {
   daily: ["lofi chill", "indie pop", "dream pop", "acoustic morning", "jazzhop"],
@@ -115,6 +195,7 @@ const defaultProfile = {
   settings: {
     theme: "dark",
     volume: 0.68,
+    repeatMode: 0,
     lastPrompt: "",
     lastScene: ""
   }
@@ -134,42 +215,17 @@ function readJsonAt(filePath, fallback) {
 
 function writeJsonAt(filePath, value) {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(tmpPath, filePath);
+}
+
+function fileTimestamp(date = new Date()) {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
 function readDataJson(fileName, fallback) {
   return readJsonAt(path.join(DATA_DIR, fileName), fallback);
-}
-
-function createAppError(message, status = 500, code = "APP_ERROR", details) {
-  const error = new Error(message);
-  error.status = status;
-  error.code = code;
-  if (details) error.details = details;
-  return error;
-}
-
-function publicErrorMessage(error) {
-  if (!error) return "服务暂时不可用，请稍后再试。";
-  if (error.name === "AbortError") return "请求超时了，请稍后再试。";
-  if (error.code === "NO_PLAYABLE_MUSIC") return error.message;
-  if (error.code === "INVALID_JSON") return "请求内容不是有效的 JSON。";
-  if (error.code === "BODY_TOO_LARGE") return "请求内容过大。";
-  if (error.status && error.status < 500) return error.message || "请求参数不正确。";
-  return error.publicMessage || "服务暂时不可用，请稍后再试。";
-}
-
-function errorPayload(error, extra = {}) {
-  const payload = {
-    ok: false,
-    error: publicErrorMessage(error),
-    code: error?.code || "SERVER_ERROR",
-    ...extra
-  };
-  if (error?.details?.fields) payload.fields = error.details.fields;
-  if (DEBUG_ERRORS && error?.details) payload.details = error.details;
-  if (DEBUG_ERRORS && error?.message && payload.error !== error.message) payload.debug = error.message;
-  return payload;
 }
 
 function stringList(value, limit = PREFERENCE_LIMIT) {
@@ -208,10 +264,38 @@ function asBoolean(value, defaultValue = false) {
 }
 
 function requireAdmin(req) {
-  if (!ADMIN_TOKEN) return;
+  if (!REQUIRE_ADMIN_TOKEN) return;
+  if (!ADMIN_TOKEN) throw createAppError("管理员授权已开启，但 CLAUDIO_ADMIN_TOKEN 未配置。", 500, "ADMIN_TOKEN_REQUIRED");
   const token = req.headers["x-claudio-token"] || req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (token === ADMIN_TOKEN) return;
   throw createAppError("需要管理员授权。", 401, "UNAUTHORIZED");
+}
+
+function requestOrigin(req) {
+  const origin = req.headers.origin || req.headers.referer;
+  if (!origin) return null;
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin;
+  } catch {
+    return "invalid";
+  }
+}
+
+function sameServerOrigin(req, origin) {
+  if (!origin) return true;
+  if (origin === "invalid") return false;
+  const protocol = req.socket.encrypted ? "https:" : "http:";
+  const host = req.headers.host || `127.0.0.1:${activePort}`;
+  const hostName = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.split(":")[0] || host;
+  const loopbackNames = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
+  if (!loopbackNames.includes(hostName.toLowerCase())) return false;
+  return origin === `${protocol}//${host}`;
+}
+
+function requireSameOrigin(req) {
+  if (sameServerOrigin(req, requestOrigin(req))) return;
+  throw createAppError("这个操作只允许来自当前 Claudio 页面。", 403, "FORBIDDEN_ORIGIN");
 }
 
 function validationError(fields, message = "请求参数无效。") {
@@ -269,7 +353,13 @@ function normalizeHttpsBase(value, field, defaultValue) {
   } catch {
     throw validationError({ [field]: "接口地址必须是有效 URL。" });
   }
-  if (parsed.protocol !== "https:") throw validationError({ [field]: "接口地址必须使用 https。" });
+  const hostname = parsed.hostname.toLowerCase();
+  const loopbackHosts = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
+  const isLoopback = loopbackHosts.includes(hostname);
+  if (parsed.protocol !== "https:" && !isLoopback) throw validationError({ [field]: "接口地址必须使用 https（本地地址允许 http）。" });
+  const is172Private = /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname);
+  const isPrivateRange = hostname.startsWith("10.") || hostname.startsWith("192.168.") || hostname.startsWith("169.254.") || hostname.startsWith("fe80:") || is172Private || hostname.endsWith(".local");
+  if (!isLoopback && isPrivateRange) throw validationError({ [field]: "接口地址不能使用内网或保留地址。" });
   if (parsed.username || parsed.password) throw validationError({ [field]: "接口地址不能包含用户名或密码。" });
   return raw;
 }
@@ -301,6 +391,7 @@ function normalizeProfile(raw = {}) {
   const settings = { ...defaultProfile.settings, ...(raw.settings || {}) };
   settings.theme = settings.theme === "light" ? "light" : "dark";
   settings.volume = Math.max(0, Math.min(1, Number(settings.volume ?? defaultProfile.settings.volume)));
+  settings.repeatMode = Math.max(0, Math.min(2, Math.round(Number(settings.repeatMode ?? defaultProfile.settings.repeatMode))));
   settings.lastPrompt = String(settings.lastPrompt || "").slice(0, 160);
   settings.lastScene = String(settings.lastScene || "").slice(0, 80);
 
@@ -318,7 +409,16 @@ function normalizeProfile(raw = {}) {
 }
 
 function loadProfile() {
-  return normalizeProfile(readJsonAt(PROFILE_PATH, defaultProfile));
+  try {
+    const raw = fs.readFileSync(PROFILE_PATH, "utf8");
+    return normalizeProfile(JSON.parse(raw));
+  } catch (error) {
+    if (fs.existsSync(PROFILE_PATH)) {
+      try { fs.renameSync(PROFILE_PATH, `${PROFILE_PATH}.corrupt-${Date.now()}`); } catch {}
+      console.error(`user/profile.json 读取或解析失败，已备份损坏文件并回退默认值: ${error.message}`);
+    }
+    return defaultProfile;
+  }
 }
 
 let userProfile = loadProfile();
@@ -327,6 +427,58 @@ function saveProfile() {
   userProfile = normalizeProfile(userProfile);
   writeJsonAt(PROFILE_PATH, userProfile);
   return userProfile;
+}
+
+function pruneProfileBackups(limit = PROFILE_BACKUP_LIMIT) {
+  ensureDir(PROFILE_BACKUP_DIR);
+  const backups = profileBackups(Number.POSITIVE_INFINITY);
+  backups.slice(limit).forEach(backup => {
+    try {
+      fs.rmSync(backup.path, { force: true });
+    } catch {}
+  });
+}
+
+function profileBackups(limit = PROFILE_BACKUP_LIMIT) {
+  ensureDir(PROFILE_BACKUP_DIR);
+  return fs.readdirSync(PROFILE_BACKUP_DIR)
+    .filter(name => PROFILE_BACKUP_NAME_RE.test(name))
+    .flatMap(name => {
+      const backupPath = path.join(PROFILE_BACKUP_DIR, name);
+      try {
+        const stat = fs.statSync(backupPath);
+        if (!stat.isFile()) return [];
+        return [{
+          name,
+          path: backupPath,
+          backupPath: `user/backups/${name}`,
+          createdAt: stat.mtime.toISOString(),
+          size: stat.size,
+          mtimeMs: stat.mtimeMs
+        }];
+      } catch {
+        return [];
+      }
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name))
+    .slice(0, limit);
+}
+
+function publicProfileBackups() {
+  return profileBackups().map(({ backupPath, createdAt, size }) => ({ backupPath, createdAt, size }));
+}
+
+function backupProfileBeforeImport() {
+  ensureDir(PROFILE_BACKUP_DIR);
+  const stamp = fileTimestamp();
+  let backupName = `profile-${stamp}.json`;
+  for (let index = 2; fs.existsSync(path.join(PROFILE_BACKUP_DIR, backupName)); index += 1) {
+    backupName = `profile-${stamp}-${index}.json`;
+  }
+  const backupPath = path.join(PROFILE_BACKUP_DIR, backupName);
+  writeJsonAt(backupPath, userProfile);
+  pruneProfileBackups();
+  return `user/backups/${backupName}`;
 }
 
 function trackIdFromFile(fileName) {
@@ -363,8 +515,28 @@ function cachedLocalFileTracks() {
   return localFileCache.tracks;
 }
 
+let declaredTracksCache = { tracks: [], timestamp: 0 };
+function cachedDeclaredTracks() {
+  const now = Date.now();
+  if (now - declaredTracksCache.timestamp < 30000) return declaredTracksCache.tracks;
+  declaredTracksCache = { tracks: readDataJson("tracks.json", []), timestamp: now };
+  return declaredTracksCache.tracks;
+}
+
+function refreshMusicLibrary() {
+  localFileCache = { tracks: localFileTracks(), timestamp: Date.now() };
+  declaredTracksCache = { tracks: readDataJson("tracks.json", []), timestamp: Date.now() };
+  const list = allTracks();
+  state.trackIndex = Math.min(state.trackIndex, Math.max(0, list.length - 1));
+  return {
+    localFiles: localFileCache.tracks.length,
+    declaredTracks: declaredTracksCache.tracks.length,
+    queueSize: list.length
+  };
+}
+
 function localTracks() {
-  const declared = readDataJson("tracks.json", []);
+  const declared = cachedDeclaredTracks();
   const declaredAudio = new Set(declared.map(track => path.basename(String(track.audioUrl || ""))).filter(Boolean));
   return declared.concat(cachedLocalFileTracks().filter(track => !declaredAudio.has(path.basename(track.audioUrl))));
 }
@@ -427,19 +599,20 @@ function isFavorite(trackOrId) {
   return Boolean(id && userProfile.favorites.some(track => track.id === id));
 }
 
-function withRuntime(track) {
+function withRuntime(track, favSet) {
   if (!track) return null;
   const audioUrl = fileAudioUrl(track);
   return {
     ...track,
     audioUrl,
     audioMode: audioModeFor(track, audioUrl),
-    favorite: isFavorite(track.id)
+    favorite: favSet instanceof Set ? favSet.has(track.id) : isFavorite(track.id)
   };
 }
 
 function currentTrack() {
-  const tracks = allTracks().map(withRuntime);
+  const favSet = new Set(userProfile.favorites.map(item => item.id));
+  const tracks = allTracks().map(item => withRuntime(item, favSet));
   return tracks[state.trackIndex] || tracks[0] || null;
 }
 
@@ -459,6 +632,8 @@ function aiPublicState(extra = {}) {
     model: deepSeekConfig.model,
     apiBase: deepSeekConfig.apiBase,
     configuredIn: deepSeekConfig.apiKey ? "runtime" : "none",
+    adminTokenRequired: REQUIRE_ADMIN_TOKEN,
+    adminTokenConfigured: Boolean(ADMIN_TOKEN),
     mode: "cheap-json-intent",
     last: state.lastAi,
     ...extra
@@ -475,6 +650,65 @@ function publicProfile() {
   };
 }
 
+function profileImportSummary(profile = userProfile) {
+  const preferences = profile.preferences || {};
+  return {
+    favorites: Array.isArray(profile.favorites) ? profile.favorites.length : 0,
+    history: Array.isArray(profile.history) ? profile.history.length : 0,
+    preferenceItems: ["artists", "genres", "scenes", "avoid"].reduce((total, key) => {
+      const items = preferences[key];
+      return total + (Array.isArray(items) ? items.length : 0);
+    }, 0)
+  };
+}
+
+function profileStorageState() {
+  const storage = {
+    path: "user/profile.json",
+    directory: "user/",
+    exists: false,
+    readable: true,
+    writable: false,
+    directoryWritable: false
+  };
+  try {
+    ensureDir(USER_DIR);
+  } catch (error) {
+    storage.readable = false;
+    storage.error = error?.code || "PROFILE_DIR_ERROR";
+    return storage;
+  }
+
+  try {
+    fs.accessSync(USER_DIR, fs.constants.W_OK);
+  } catch (error) {
+    storage.error = error?.code || "PROFILE_DIR_NOT_WRITABLE";
+    return storage;
+  }
+  storage.directoryWritable = true;
+
+  storage.exists = fs.existsSync(PROFILE_PATH);
+  if (!storage.exists) {
+    storage.writable = storage.directoryWritable;
+    return storage;
+  }
+
+  try {
+    fs.accessSync(PROFILE_PATH, fs.constants.R_OK);
+  } catch (error) {
+    storage.readable = false;
+    storage.error = error?.code || "PROFILE_NOT_READABLE";
+  }
+  try {
+    fs.accessSync(PROFILE_PATH, fs.constants.W_OK);
+    storage.writable = true;
+  } catch (error) {
+    storage.error = storage.error || error?.code || "PROFILE_NOT_WRITABLE";
+  }
+
+  return storage;
+}
+
 function localFileTrackCount() {
   return cachedLocalFileTracks().length;
 }
@@ -489,8 +723,30 @@ function musicSourcesState() {
   };
 }
 
+function healthConfigState() {
+  return {
+    host: HOST,
+    port: publicNumericEnvState("PORT"),
+    deepSeek: {
+      timeoutMs: publicNumericEnvState("DEEPSEEK_TIMEOUT_MS"),
+      maxTokens: publicNumericEnvState("DEEPSEEK_MAX_TOKENS"),
+      configured: deepSeekEnabled()
+    },
+    serverTimeouts: {
+      requestTimeoutMs: publicNumericEnvState("CLAUDIO_REQUEST_TIMEOUT_MS"),
+      headersTimeoutMs: publicNumericEnvState("CLAUDIO_HEADERS_TIMEOUT_MS"),
+      keepAliveTimeoutMs: publicNumericEnvState("CLAUDIO_KEEP_ALIVE_TIMEOUT_MS")
+    },
+    admin: {
+      tokenRequired: REQUIRE_ADMIN_TOKEN,
+      tokenConfigured: Boolean(ADMIN_TOKEN)
+    }
+  };
+}
+
 function publicState(extra = {}) {
-  const queue = allTracks().map(withRuntime);
+  const favSet = new Set(userProfile.favorites.map(item => item.id));
+  const queue = allTracks().map(item => withRuntime(item, favSet));
   const now = queue[state.trackIndex] || queue[0] || null;
   return {
     app: APP_NAME,
@@ -551,6 +807,17 @@ function stopSseHeartbeatIfIdle() {
   sseHeartbeat = null;
 }
 
+function closeSseClients(event = "shutdown", payload = { ok: false, reason: "shutdown" }) {
+  for (const res of Array.from(sseClients)) {
+    try {
+      writeSse(res, event, payload);
+      res.end();
+    } catch {}
+    sseClients.delete(res);
+  }
+  stopSseHeartbeatIfIdle();
+}
+
 function writeSse(res, event, payload) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
 }
@@ -570,59 +837,6 @@ function sendState(res, extra = {}) {
   const payload = publicState(extra);
   sendJson(res, 200, payload);
   broadcastState("now", payload);
-}
-
-function sendJson(res, status, payload) {
-  const responsePayload = res.requestId && payload && typeof payload === "object" && !Array.isArray(payload)
-    ? { requestId: res.requestId, ...payload }
-    : payload;
-  const body = JSON.stringify(responsePayload);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "Content-Length": Buffer.byteLength(body)
-  });
-  res.end(body);
-}
-
-function sendError(res, status, error, extra = {}) {
-  return sendJson(res, status, errorPayload(error, extra));
-}
-
-function sendText(res, status, text, type = "text/plain; charset=utf-8", headers = {}) {
-  res.writeHead(status, {
-    "Content-Type": type,
-    "Content-Length": Buffer.byteLength(text),
-    ...headers
-  });
-  res.end(text);
-}
-
-function getBody(req) {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    let rejected = false;
-    req.on("data", chunk => {
-      if (rejected) return;
-      raw += chunk;
-      if (raw.length > 1_000_000) {
-        rejected = true;
-        req.destroy();
-        reject(createAppError("请求内容过大。", 413, "BODY_TOO_LARGE"));
-      }
-    });
-    req.on("end", () => {
-      if (rejected) return;
-      try {
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch {
-        reject(createAppError("请求内容不是有效的 JSON。", 400, "INVALID_JSON"));
-      }
-    });
-    req.on("error", error => {
-      if (!rejected) reject(error);
-    });
-  });
 }
 
 function apiUrl(base, endpoint, params = {}) {
@@ -651,7 +865,7 @@ async function fetchJson(url, timeoutMs = 12000) {
   } catch (error) {
     if (error.name === "AbortError") throw createAppError("上游音乐服务请求超时。", 504, "UPSTREAM_TIMEOUT");
     if (error.status) throw error;
-    throw createAppError("上游音乐服务暂时不可用。", 502, "UPSTREAM_UNAVAILABLE", error.message);
+    throw createAppError("上游音乐服务暂时不可用。", 502, "UPSTREAM_UNAVAILABLE", { upstream: error.message });
   } finally {
     clearTimeout(timer);
   }
@@ -684,7 +898,7 @@ async function postJson(url, body, headers = {}, timeoutMs = 12000) {
   } catch (error) {
     if (error.name === "AbortError") throw createAppError("上游服务请求超时。", 504, "UPSTREAM_TIMEOUT");
     if (error.status) throw error;
-    throw createAppError("上游服务暂时不可用。", 502, "UPSTREAM_UNAVAILABLE", error.message);
+    throw createAppError("上游服务暂时不可用。", 502, "UPSTREAM_UNAVAILABLE", { upstream: error.message });
   } finally {
     clearTimeout(timer);
   }
@@ -814,11 +1028,11 @@ function detectMood(text) {
 }
 
 function wantsRadio(text) {
-  return /电台|广播|radio|fm\b/i.test(String(text || ""));
+  return /电台|广播|\bradio\b|\bfm\b/i.test(String(text || ""));
 }
 
 function wantsElectronic(text) {
-  return /电子|电音|edm|electronic|techno|trance|dubstep|house\b/i.test(String(text || ""));
+  return /电子|电音|\bedm\b|\belectronic\b|\btechno\b|\btrance\b|\bdubstep\b|\bhouse\b/i.test(String(text || ""));
 }
 
 function looksElectronic(track) {
@@ -852,7 +1066,7 @@ function extractMusicQuery(text) {
   if (!intent) return "";
   q = q
     .replace(/^(请|麻烦|帮我|给我|我要|我想听|想听|能不能|可以)?/u, "")
-    .replace(/(网易云|网易云音乐|QQ音乐|酷狗|酷我|Spotify|Apple Music|Audius|Deezer|音乐软件|音乐API|音乐接口)/gi, "")
+    .replace(/(音乐软件|音乐API|音乐接口|播放器|音乐平台)/g, "")
     .replace(/(播放|放一首|点歌|来一首|听一个|听歌|搜歌|搜索|找一首|找首|音乐|歌曲|歌单|歌)/g, "")
     .replace(/[，。！？、,.!?]/g, " ")
     .replace(/\s+/g, " ")
@@ -918,6 +1132,7 @@ function updateSettings(settings = {}) {
   const next = { ...userProfile.settings };
   if (settings.theme === "light" || settings.theme === "dark") next.theme = settings.theme;
   if (typeof settings.volume === "number") next.volume = Math.max(0, Math.min(1, settings.volume));
+  if (typeof settings.repeatMode === "number") next.repeatMode = Math.max(0, Math.min(2, Math.round(settings.repeatMode)));
   if (settings.lastPrompt !== undefined) next.lastPrompt = String(settings.lastPrompt || "").slice(0, 160);
   if (settings.lastScene !== undefined) next.lastScene = String(settings.lastScene || "").slice(0, 80);
   userProfile.settings = next;
@@ -1137,6 +1352,10 @@ function noPlayableMusicError(query, failures) {
 
 const searchCache = new Map();
 
+function normalizeQuery(query) {
+  return String(query || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function cacheKeyForSearch(query, options = {}) {
   return JSON.stringify({
     query: normalizeQuery(query),
@@ -1238,8 +1457,16 @@ function addToQueue(track, playNow = true, context = "queue") {
   const existing = state.dynamicTracks.findIndex(item => item.id === runtime.id);
   if (existing >= 0) state.dynamicTracks[existing] = runtime;
   else state.dynamicTracks.unshift(runtime);
+  if (state.dynamicTracks.length > DYNAMIC_TRACKS_LIMIT) {
+    const currentId = currentTrack()?.id;
+    state.dynamicTracks = state.dynamicTracks.slice(0, DYNAMIC_TRACKS_LIMIT);
+    if (state.shuffledIndices) state.shuffledIndices = null;
+    const list = allTracks();
+    const idx = list.findIndex(item => item.id === currentId);
+    state.trackIndex = idx >= 0 ? idx : Math.min(state.trackIndex, Math.max(0, list.length - 1));
+  }
   if (playNow) {
-    state.trackIndex = 0;
+    state.trackIndex = existing >= 0 ? existing : 0;
     state.startedAt = Date.now();
     state.playing = true;
     addHistory(runtime, context);
@@ -1269,12 +1496,14 @@ async function recommendMusic(text, options = {}) {
     avoidElectronic: options.avoidElectronic ?? !wantsElectronic(text)
   };
 
-  const results = await Promise.allSettled(
-    runLimited(queries, RECOMMENDATION_CONCURRENCY, async query => {
+  const results = await runLimited(queries, RECOMMENDATION_CONCURRENCY, async query => {
+    try {
       const track = await playableFromQuery(query, searchOptions);
-      return { track, query };
-    })
-  );
+      return { status: "fulfilled", value: { track, query } };
+    } catch (error) {
+      return { status: "rejected", reason: error };
+    }
+  });
 
   const seenIds = new Set();
   for (const result of results) {
@@ -1310,7 +1539,6 @@ async function recommendMusic(text, options = {}) {
   state.startedAt = Date.now();
   state.playing = true;
   addHistory(tracks[0], `recommend: ${text}`);
-  saveProfile();
   return tracks;
 }
 
@@ -1322,10 +1550,127 @@ function stamp() {
   });
 }
 
+function defineRoutePolicy(methods, options = {}) {
+  return {
+    methods,
+    publicCors: false,
+    sameOriginGet: false,
+    stateChangingGet: false,
+    ...options
+  };
+}
+
+const ROUTE_POLICIES = new Map([
+  ["/api/health", defineRoutePolicy(["GET", "HEAD"], { publicCors: true })],
+  ["/api/user/profile", defineRoutePolicy(["GET", "HEAD", "POST"], { sameOriginGet: true })],
+  ["/api/user/profile/backups", defineRoutePolicy(["GET", "HEAD"], { sameOriginGet: true })],
+  ["/api/user/profile/restore", defineRoutePolicy(["POST"])],
+  ["/api/user/favorite", defineRoutePolicy(["POST"])],
+  ["/api/user/history", defineRoutePolicy(["POST"])],
+  ["/api/user/preferences", defineRoutePolicy(["POST"])],
+  ["/api/user/settings", defineRoutePolicy(["POST"])],
+  ["/api/ai/status", defineRoutePolicy(["GET", "HEAD"])],
+  ["/api/ai/config", defineRoutePolicy(["POST"])],
+  ["/api/ai/clear", defineRoutePolicy(["POST"])],
+  ["/api/now", defineRoutePolicy(["GET", "HEAD"])],
+  ["/api/now-lite", defineRoutePolicy(["GET", "HEAD"])],
+  ["/api/next", defineRoutePolicy(["GET", "POST"], { stateChangingGet: true })],
+  ["/api/previous", defineRoutePolicy(["GET", "POST"], { stateChangingGet: true })],
+  ["/api/play", defineRoutePolicy(["POST"])],
+  ["/api/queue/shuffle", defineRoutePolicy(["POST"])],
+  ["/api/queue/remove", defineRoutePolicy(["POST"])],
+  ["/api/queue/clear", defineRoutePolicy(["POST"])],
+  ["/api/queue/restore", defineRoutePolicy(["POST"])],
+  ["/api/library/refresh", defineRoutePolicy(["POST"])],
+  ["/api/music/search", defineRoutePolicy(["GET"])],
+  ["/api/music/play", defineRoutePolicy(["POST"])],
+  ["/api/music/recommend", defineRoutePolicy(["POST"])],
+  ["/api/chat", defineRoutePolicy(["POST"])],
+  ["/api/stream", defineRoutePolicy(["GET"])]
+]);
+
+function routePolicy(pathname) {
+  return ROUTE_POLICIES.get(pathname) || null;
+}
+
+function routeMethods(policy) {
+  return policy?.methods || [];
+}
+
+function sendApiMethodNotAllowed(res, methods) {
+  return sendError(
+    res,
+    405,
+    createAppError("这个 API 不支持当前请求方法。", 405, "METHOD_NOT_ALLOWED"),
+    {},
+    { Allow: apiAllowHeader(methods) }
+  );
+}
+
+function apiAllowHeader(methods) {
+  return Array.from(new Set([...(methods || []), "OPTIONS"])).join(", ");
+}
+
+function applyApiCorsHeaders(res, policy) {
+  const methods = routeMethods(policy);
+  if (policy?.publicCors) res.setHeader("Access-Control-Allow-Origin", "*");
+  if (methods.length) res.setHeader("Access-Control-Allow-Methods", methods.join(", "));
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Claudio-Token");
+}
+
+function sendApiPreflight(res, policy) {
+  const methods = routeMethods(policy);
+  applyApiCorsHeaders(res, policy);
+  res.writeHead(204, {
+    Allow: apiAllowHeader(methods)
+  });
+  res.end();
+}
+
+function isLegacyNavigationGet(req, url) {
+  return req.method === "GET" && url.searchParams.get("legacy") === "1";
+}
+
+function resolveProfileBackupPath(backupPath) {
+  const raw = String(backupPath || "").replace(/\\/g, "/");
+  const name = raw.slice("user/backups/".length);
+  if (!raw.startsWith("user/backups/") || !PROFILE_BACKUP_NAME_RE.test(name)) {
+    throw validationError({ backupPath: "备份路径无效。" });
+  }
+  const resolved = path.resolve(ROOT, raw);
+  const backupRoot = path.resolve(PROFILE_BACKUP_DIR);
+  const relative = path.relative(backupRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw validationError({ backupPath: "备份路径无效。" });
+  }
+  if (!fs.existsSync(resolved)) {
+    throw validationError({ backupPath: "没有找到这个备份。" });
+  }
+  return { raw, resolved };
+}
+
 async function handleApi(req, res, url) {
-  if (req.method === "GET" && url.pathname === "/api/health") {
+  const policy = routePolicy(url.pathname);
+  const allowedMethods = routeMethods(policy);
+  if (req.method === "OPTIONS") {
+    if (!policy) return sendError(res, 404, createAppError("没有找到这个 API。", 404, "API_NOT_FOUND"));
+    return sendApiPreflight(res, policy);
+  }
+
+  applyApiCorsHeaders(res, policy);
+  const needsSameOrigin = allowedMethods.includes(req.method) && (
+    !["GET", "HEAD"].includes(req.method) ||
+    policy?.stateChangingGet ||
+    policy?.sameOriginGet
+  );
+  if (needsSameOrigin) {
+    requireSameOrigin(req);
+  }
+  const method = req.method === "HEAD" ? "GET" : req.method;
+  if (method === "GET" && url.pathname === "/api/health") {
     const queue = allTracks();
     const playableQueue = queue.map(withRuntime).filter(isPlayableTrack);
+    const profileStorage = profileStorageState();
     return sendJson(res, 200, {
       ok: true,
       app: APP_NAME,
@@ -1333,6 +1678,10 @@ async function handleApi(req, res, url) {
       appVersion: APP_VERSION,
       frontendVersion: FRONTEND_VERSION,
       host: HOST,
+      port: activePort,
+      pid: process.pid,
+      startedAt: STARTED_AT.toISOString(),
+      uptimeSeconds: Math.round(process.uptime()),
       queueSize: queue.length,
       playableQueueSize: playableQueue.length,
       dynamicTracks: state.dynamicTracks.length,
@@ -1342,8 +1691,12 @@ async function handleApi(req, res, url) {
         extensions: AUDIO_EXTENSIONS
       },
       sources: musicSourcesState(),
+      storage: {
+        profile: profileStorage
+      },
+      config: healthConfigState(),
       checks: {
-        profileWritable: true,
+        profileWritable: profileStorage.writable,
         deepSeekConfigured: deepSeekEnabled(),
         syntheticAudioDisabled: true,
         radioExplicitOnly: true
@@ -1358,8 +1711,46 @@ async function handleApi(req, res, url) {
     });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/user/profile") {
+  if (method === "GET" && url.pathname === "/api/user/profile") {
     return sendJson(res, 200, { ok: true, profile: publicProfile() });
+  }
+
+  if (method === "GET" && url.pathname === "/api/user/profile/backups") {
+    return sendJson(res, 200, { ok: true, backups: publicProfileBackups() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/user/profile") {
+    const body = await getBody(req);
+    const input = body.profile || body;
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw validationError({ profile: "资料文件格式不正确。" });
+    }
+    const backupPath = backupProfileBeforeImport();
+    userProfile = normalizeProfile(input);
+    state.volume = userProfile.settings.volume;
+    saveProfile();
+    const summary = profileImportSummary();
+    const payload = publicState({ reason: "profile-import", profile: publicProfile(), summary, backupPath });
+    broadcastState("now", payload);
+    return sendJson(res, 200, { ok: true, profile: publicProfile(), summary, backupPath, state: payload });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/user/profile/restore") {
+    const body = await getBody(req);
+    const backup = resolveProfileBackupPath(body.backupPath);
+    let restored;
+    try {
+      restored = JSON.parse(fs.readFileSync(backup.resolved, "utf8"));
+    } catch {
+      throw validationError({ backupPath: "备份文件已损坏，无法恢复。" });
+    }
+    userProfile = normalizeProfile(restored);
+    state.volume = userProfile.settings.volume;
+    saveProfile();
+    const summary = profileImportSummary();
+    const payload = publicState({ reason: "profile-restore", profile: publicProfile(), summary, backupPath: backup.raw });
+    broadcastState("now", payload);
+    return sendJson(res, 200, { ok: true, profile: publicProfile(), summary, backupPath: backup.raw, state: payload });
   }
 
   if (req.method === "POST" && url.pathname === "/api/user/favorite") {
@@ -1386,12 +1777,17 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true, settings, profile: publicProfile() });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/ai/status") {
+  if (method === "GET" && url.pathname === "/api/ai/status") {
     return sendJson(res, 200, { ok: true, ai: aiPublicState() });
   }
 
   if (req.method === "POST" && url.pathname === "/api/ai/config") {
     try {
+      if (!isLoopbackHostOnly()) {
+        if (!ADMIN_TOKEN) throw createAppError("远程暴露时管理员口令未配置，请设置 CLAUDIO_ADMIN_TOKEN。", 500, "ADMIN_TOKEN_REQUIRED");
+        const token = req.headers["x-claudio-token"] || req.headers.authorization?.replace(/^Bearer\s+/i, "");
+        if (token !== ADMIN_TOKEN) throw createAppError("需要管理员授权。", 401, "UNAUTHORIZED");
+      }
       requireAdmin(req);
       const body = await getBody(req);
       const apiKey = requireString(body.apiKey, "apiKey", { maxLength: 300, label: "DeepSeek API Key" });
@@ -1411,6 +1807,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/ai/clear") {
     try {
+      if (!isLoopbackHostOnly()) {
+        if (!ADMIN_TOKEN) throw createAppError("远程暴露时管理员口令未配置，请设置 CLAUDIO_ADMIN_TOKEN。", 500, "ADMIN_TOKEN_REQUIRED");
+        const token = req.headers["x-claudio-token"] || req.headers.authorization?.replace(/^Bearer\s+/i, "");
+        if (token !== ADMIN_TOKEN) throw createAppError("需要管理员授权。", 401, "UNAUTHORIZED");
+      }
       requireAdmin(req);
       deepSeekConfig.apiKey = "";
       state.lastAi = { provider: "DeepSeek", source: "runtime-config", enabled: false, model: deepSeekConfig.model };
@@ -1420,26 +1821,29 @@ async function handleApi(req, res, url) {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/api/now") return sendJson(res, 200, publicState());
+  if (method === "GET" && url.pathname === "/api/now") return sendJson(res, 200, publicState());
 
-  if (req.method === "GET" && url.pathname === "/api/now-lite") return sendJson(res, 200, publicNowState());
+  if (method === "GET" && url.pathname === "/api/now-lite") return sendJson(res, 200, publicNowState());
 
-  if (req.method === "GET" && url.pathname === "/api/next") {
+  function moveTrack(delta, reason) {
     const list = allTracks();
-    state.trackIndex = list.length ? (state.trackIndex + 1) % list.length : 0;
+    state.trackIndex = list.length ? (state.trackIndex + delta + list.length) % list.length : 0;
     state.startedAt = Date.now();
     const now = currentTrack();
-    if (state.playing && now) addHistory(now, "next");
-    return sendState(res, { reason: "next" });
+    if (state.playing && now) addHistory(now, reason);
+    return sendState(res, { reason });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/previous") {
-    const list = allTracks();
-    state.trackIndex = list.length ? (state.trackIndex - 1 + list.length) % list.length : 0;
-    state.startedAt = Date.now();
-    const now = currentTrack();
-    if (state.playing && now) addHistory(now, "previous");
-    return sendState(res, { reason: "previous" });
+  if ((req.method === "POST" || isLegacyNavigationGet(req, url)) && url.pathname === "/api/next") {
+    return moveTrack(1, "next");
+  }
+
+  if ((req.method === "POST" || isLegacyNavigationGet(req, url)) && url.pathname === "/api/previous") {
+    return moveTrack(-1, "previous");
+  }
+
+  if (req.method === "GET" && policy?.stateChangingGet) {
+    return sendApiMethodNotAllowed(res, allowedMethods);
   }
 
   if (req.method === "POST" && url.pathname === "/api/play") {
@@ -1509,7 +1913,9 @@ async function handleApi(req, res, url) {
       }
 
       list.splice(removedIndex, 1);
-      if (state.trackIndex >= list.length) state.trackIndex = Math.max(0, list.length - 1);
+      state.shuffledIndices = null;
+      if (removedIndex < state.trackIndex) state.trackIndex -= 1;
+      state.trackIndex = Math.min(state.trackIndex, Math.max(0, allTracks().length - 1));
       return sendJson(res, 200, publicState({ reason: "remove", removedIndex }));
     } catch (error) {
       return sendError(res, error.status || 400, error);
@@ -1551,6 +1957,11 @@ async function handleApi(req, res, url) {
     } catch (error) {
       return sendError(res, error.status || 400, error);
     }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/library/refresh") {
+    const library = refreshMusicLibrary();
+    return sendState(res, { reason: "library-refresh", library });
   }
 
   if (req.method === "GET" && url.pathname === "/api/music/search") {
@@ -1663,6 +2074,10 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (policy && !allowedMethods.includes(req.method)) {
+    return sendApiMethodNotAllowed(res, allowedMethods);
+  }
+
   sendError(res, 404, createAppError("没有找到这个 API。", 404, "API_NOT_FOUND"));
 }
 
@@ -1670,6 +2085,12 @@ function logRequest(requestId, method, pathname, status, ms) {
   const time = new Date().toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const statusColor = status >= 500 ? "\x1b[31m" : status >= 400 ? "\x1b[33m" : "\x1b[32m";
   console.log(`\x1b[2m${time}\x1b[0m ${statusColor}${status}\x1b[0m ${method} ${pathname} \x1b[2m${ms}ms\x1b[0m \x1b[2m#${requestId}\x1b[0m`);
+}
+
+function applySecurityHeaders(res) {
+  Object.entries(SECURITY_HEADERS).forEach(([name, value]) => {
+    if (!res.hasHeader(name)) res.setHeader(name, value);
+  });
 }
 
 function safeDecodeURIComponent(value) {
@@ -1710,6 +2131,20 @@ function renderVersionedAsset(text) {
     .replace(/__CLAUDIO_APP_VERSION__/g, APP_VERSION);
 }
 
+function methodNotAllowed(res, allowed = "GET, HEAD") {
+  return sendText(res, 405, "Method Not Allowed", "text/plain; charset=utf-8", {
+    Allow: allowed
+  });
+}
+
+function endHead(req, res) {
+  if (req.method === "HEAD") {
+    res.end();
+    return true;
+  }
+  return false;
+}
+
 function serveVersionedText(req, res, filePath, cacheControl) {
   fs.readFile(filePath, "utf8", (error, text) => {
     if (error) return sendText(res, 404, "Not found");
@@ -1718,6 +2153,15 @@ function serveVersionedText(req, res, filePath, cacheControl) {
     const etag = `W/\"${statVersion}-${FRONTEND_VERSION}\"`;
     if (req.headers["if-none-match"] === etag) {
       res.writeHead(304, { ETag: etag, "Cache-Control": cacheControl });
+      return res.end();
+    }
+    if (req.method === "HEAD") {
+      res.writeHead(200, {
+        "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "text/plain; charset=utf-8",
+        "Content-Length": Buffer.byteLength(body),
+        ETag: etag,
+        "Cache-Control": cacheControl
+      });
       return res.end();
     }
     return sendText(res, 200, body, mimeTypes[path.extname(filePath).toLowerCase()] || "text/plain; charset=utf-8", {
@@ -1742,6 +2186,7 @@ function serveFile(req, res, filePath, cacheControl = "public, max-age=300") {
       ETag: etag,
       "Cache-Control": cacheControl
     });
+    if (endHead(req, res)) return;
     fs.createReadStream(filePath).pipe(res);
   });
 }
@@ -1761,6 +2206,7 @@ function serveAudioFile(req, res, filePath, cacheControl = "public, max-age=8640
         ETag: etag,
         "Cache-Control": cacheControl
       });
+      if (endHead(req, res)) return;
       return fs.createReadStream(filePath).pipe(res);
     }
 
@@ -1797,11 +2243,13 @@ function serveAudioFile(req, res, filePath, cacheControl = "public, max-age=8640
       ETag: etag,
       "Cache-Control": cacheControl
     });
+    if (endHead(req, res)) return;
     fs.createReadStream(filePath, { start, end }).pipe(res);
   });
 }
 
 function serveStatic(req, res, url) {
+  if (!["GET", "HEAD"].includes(req.method)) return methodNotAllowed(res);
   const filePath = safePublicPath(url.pathname);
   if (!filePath) return sendText(res, 403, "Forbidden");
   fs.stat(filePath, error => {
@@ -1813,11 +2261,15 @@ function serveStatic(req, res, url) {
     if (fileName === "index.html" || fileName === "service-worker.js") {
       return serveVersionedText(req, res, filePath, "no-cache");
     }
-    serveFile(req, res, filePath, "public, max-age=300");
+    const cacheControl = url.searchParams.get("v") === FRONTEND_VERSION
+      ? VERSIONED_STATIC_CACHE
+      : SHORT_STATIC_CACHE;
+    serveFile(req, res, filePath, cacheControl);
   });
 }
 
 function serveMusic(req, res, url) {
+  if (!["GET", "HEAD"].includes(req.method)) return methodNotAllowed(res);
   const filePath = safeMusicPath(url.pathname);
   if (!filePath) return sendText(res, 403, "Forbidden");
   serveAudioFile(req, res, filePath, "public, max-age=86400");
@@ -1836,9 +2288,11 @@ const server = http.createServer(async (req, res) => {
   const originalWriteHead = res.writeHead;
 
   res.requestId = requestId;
+  res.headOnly = req.method === "HEAD";
 
   res.writeHead = function (code, ...args) {
     statusCode = code;
+    applySecurityHeaders(this);
     return originalWriteHead.call(this, code, ...args);
   };
 
@@ -1862,7 +2316,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.requestTimeout = REQUEST_TIMEOUT_MS;
+server.headersTimeout = HEADERS_TIMEOUT_MS;
+server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+
 let activePort = PORT;
+let shuttingDown = false;
 
 server.on("error", error => {
   if (error.code === "EADDRINUSE" && activePort < PORT + 10) {
@@ -1878,7 +2337,25 @@ server.on("listening", () => {
   console.log(`Claudio Music is ready at http://127.0.0.1:${activePort}/`);
 });
 
+server.on("clientError", (error, socket) => {
+  if (!socket.writable) return;
+  socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+});
+
 server.listen(activePort, HOST);
 
-process.on("SIGINT", () => { saveProfile(); process.exit(0); });
-process.on("SIGTERM", () => { saveProfile(); process.exit(0); });
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  saveProfile();
+  closeSseClients("shutdown", { ok: false, signal });
+  const forceExit = setTimeout(() => process.exit(0), 2500);
+  server.close(() => {
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+  server.closeIdleConnections?.();
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

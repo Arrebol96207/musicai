@@ -2,16 +2,63 @@
   "name": "Claudio Music",
   "short_name": "Claudio",
   "description": "Local-first AI music recommendation and playback app.",
+  "id": "/?source=pwa",
   "start_url": "/",
+  "scope": "/",
+  "lang": "zh-CN",
+  "dir": "ltr",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#08080d",
   "theme_color": "#090911",
+  "categories": ["music", "entertainment", "productivity"],
   "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "/icons/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "推荐音乐",
+      "short_name": "推荐",
+      "description": "打开 Claudio 并开始音乐推荐。",
+      "url": "/?action=recommend",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "播放队列",
+      "short_name": "队列",
+      "description": "打开 Claudio 播放队列。",
+      "url": "/?action=queue",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     }
   ]
 }

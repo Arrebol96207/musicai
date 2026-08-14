@@ -10,6 +10,29 @@ namespace ClaudioMusicLauncher
 {
     internal static class Program
     {
+        private sealed class ServerHandle
+        {
+            private volatile int readyPort;
+
+            public ServerHandle(Process process)
+            {
+                Process = process;
+            }
+
+            public Process Process { get; private set; }
+
+            public int ReadyPort
+            {
+                get { return readyPort; }
+            }
+
+            public void ObserveLogLine(string line)
+            {
+                int port = ParseReadyPort(line);
+                if (port != 0) readyPort = port;
+            }
+        }
+
         [STAThread]
         private static int Main()
         {
@@ -31,8 +54,38 @@ namespace ClaudioMusicLauncher
                 return 1;
             }
 
+            using (Mutex startupMutex = new Mutex(false, "Local\\ClaudioMusicLauncherStartup"))
+            {
+                bool lockTaken = false;
+                try
+                {
+                    lockTaken = WaitForStartupLock(startupMutex, 30000);
+                    if (!lockTaken)
+                    {
+                        int waitingPort = FindExistingClaudioPort();
+                        if (waitingPort != 0)
+                        {
+                            return OpenReadyPort(waitingPort);
+                        }
+
+                        Console.WriteLine("Another launcher is still starting Claudio Music. Please try again in a moment.");
+                        Pause();
+                        return 1;
+                    }
+
+                    return StartOrReuseServer(nodePath, root);
+                }
+                finally
+                {
+                    if (lockTaken) startupMutex.ReleaseMutex();
+                }
+            }
+        }
+
+        private static int StartOrReuseServer(string nodePath, string root)
+        {
             int port = FindExistingClaudioPort();
-            Process serverProcess = null;
+            ServerHandle serverProcess = null;
 
             if (port == 0)
             {
@@ -42,12 +95,14 @@ namespace ClaudioMusicLauncher
 
             if (port == 0)
             {
-                port = ProbePorts();
+                Console.WriteLine("The server did not start. Run node server.js in this folder to see the error.");
+                Pause();
+                return 1;
             }
 
-            if (port == 0)
+            if (!IsHealthyClaudioPort(port, 1000))
             {
-                Console.WriteLine("The server did not start. Run node server.js in this folder to see the error.");
+                Console.WriteLine("The detected Claudio Music port is no longer responding.");
                 Pause();
                 return 1;
             }
@@ -58,6 +113,34 @@ namespace ClaudioMusicLauncher
             OpenUrl(url);
 
             return 0;
+        }
+
+        private static int OpenReadyPort(int port)
+        {
+            if (!IsHealthyClaudioPort(port, 1000))
+            {
+                Console.WriteLine("The detected Claudio Music port is no longer responding.");
+                Pause();
+                return 1;
+            }
+
+            string url = "http://127.0.0.1:" + port + "/";
+            Console.WriteLine("Claudio Music is ready:");
+            Console.WriteLine(url);
+            OpenUrl(url);
+            return 0;
+        }
+
+        private static bool WaitForStartupLock(Mutex startupMutex, int timeoutMs)
+        {
+            try
+            {
+                return startupMutex.WaitOne(timeoutMs);
+            }
+            catch (AbandonedMutexException)
+            {
+                return true;
+            }
         }
 
         private static string FindNode()
@@ -90,7 +173,7 @@ namespace ClaudioMusicLauncher
             return "";
         }
 
-        private static Process StartServer(string nodePath, string root)
+        private static ServerHandle StartServer(string nodePath, string root)
         {
             string logPath = Path.Combine(root, ".claudio-launcher.log");
             var info = new ProcessStartInfo
@@ -105,32 +188,43 @@ namespace ClaudioMusicLauncher
             };
 
             var process = new Process { StartInfo = info, EnableRaisingEvents = true };
+            var handle = new ServerHandle(process);
             process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
             {
-                if (!String.IsNullOrEmpty(e.Data)) AppendLog(logPath, e.Data);
+                if (!String.IsNullOrEmpty(e.Data))
+                {
+                    handle.ObserveLogLine(e.Data);
+                    AppendLog(logPath, e.Data);
+                }
             };
             process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
             {
-                if (!String.IsNullOrEmpty(e.Data)) AppendLog(logPath, e.Data);
+                if (!String.IsNullOrEmpty(e.Data))
+                {
+                    handle.ObserveLogLine(e.Data);
+                    AppendLog(logPath, e.Data);
+                }
             };
 
+            AppendLog(logPath, "Starting server with " + nodePath);
             process.Start();
+            AppendLog(logPath, "Started process " + process.Id);
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            return process;
+            return handle;
         }
 
-        private static int WaitForServerPort(Process process, int timeoutMs)
+        private static int WaitForServerPort(ServerHandle server, int timeoutMs)
         {
             DateTime deadline = DateTime.Now.AddMilliseconds(timeoutMs);
             while (DateTime.Now < deadline)
             {
-                if (process != null && process.HasExited) return 0;
+                if (server != null && server.Process.HasExited) return 0;
 
-                int port = ProbePorts();
-                if (port != 0) return port;
+                int port = server == null ? 0 : server.ReadyPort;
+                if (port != 0 && IsHealthyClaudioPort(port, 1000)) return port;
 
-                Thread.Sleep(400);
+                Thread.Sleep(200);
             }
 
             return 0;
@@ -145,22 +239,37 @@ namespace ClaudioMusicLauncher
         {
             for (int port = 3000; port <= 3010; port++)
             {
-                try
-                {
-                    string json = HttpGet("http://127.0.0.1:" + port + "/api/health", 300);
-                    if (IsClaudioHealth(json))
-                    {
-                        string now = HttpGet("http://127.0.0.1:" + port + "/api/now", 300);
-                        if (IsClaudioHealth(now))
-                        {
-                            return port;
-                        }
-                    }
-                }
-                catch
-                {
-                    // Try the next port.
-                }
+                if (IsHealthyClaudioPort(port, 800)) return port;
+            }
+
+            return 0;
+        }
+
+        private static bool IsHealthyClaudioPort(int port, int timeoutMs)
+        {
+            try
+            {
+                string json = HttpGet("http://127.0.0.1:" + port + "/api/health", timeoutMs);
+                return IsClaudioHealth(json);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int ParseReadyPort(string line)
+        {
+            Match match = Regex.Match(
+                line ?? "",
+                "Claudio Music is ready at http://127\\.0\\.0\\.1:(\\d+)/",
+                RegexOptions.IgnoreCase
+            );
+
+            int port;
+            if (match.Success && Int32.TryParse(match.Groups[1].Value, out port) && port > 0 && port <= 65535)
+            {
+                return port;
             }
 
             return 0;

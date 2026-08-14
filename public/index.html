@@ -3,10 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#090911">
+    <meta name="theme-color" id="themeColorMeta" content="#05070b">
+    <meta name="description" content="Claudio Music 是本地优先的 AI 音乐推荐和真实音频播放应用。">
+    <meta name="application-name" content="Claudio Music">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Claudio">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Claudio Music</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
     <link rel="stylesheet" href="/styles.css?v=__CLAUDIO_FRONTEND_VERSION__">
   </head>
   <body>
@@ -16,7 +22,7 @@
           <div class="avatar">C</div>
           <div>
             <strong>Claudio</strong>
-            <span>AI Music</span>
+            <span>AI Music Console</span>
           </div>
         </div>
 
@@ -35,189 +41,223 @@
         <div class="clock-mini" id="clockMini">--:--</div>
       </header>
 
-      <section class="hero">
-        <div class="digital-clock" id="digitalClock" aria-label="当前时间">--:--</div>
-        <div class="date" id="dateText">----</div>
-      </section>
+      <div class="workspace">
+        <section class="studio-column" aria-label="播放控制台">
+          <section class="hero">
+            <div class="digital-clock" id="digitalClock" aria-label="当前时间">--:--</div>
+            <div class="date" id="dateText">----</div>
+          </section>
 
-      <section class="now-card" aria-label="正在播放">
-        <div class="cover" id="coverArt">
-          <span class="music-note">♪</span>
-          <div class="loading-overlay" id="loadingOverlay" hidden>
-            <div class="spinner"></div>
+          <section class="now-card" aria-label="正在播放">
+            <div class="cover" id="coverArt">
+              <span class="music-note">♪</span>
+              <div class="loading-overlay" id="loadingOverlay" hidden>
+                <div class="spinner"></div>
+              </div>
+            </div>
+            <div class="now-copy">
+              <p class="eyebrow">NOW PLAYING</p>
+              <h1 id="trackTitle">载入中</h1>
+              <p id="trackArtist">Claudio Music</p>
+            </div>
+            <div class="on-air" id="statusPill">READY</div>
+          </section>
+
+          <section class="transport" aria-label="播放器">
+            <div class="playing-bars" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+
+            <div class="track-meta">
+              <strong id="transportTitle">-</strong>
+              <span id="transportState">READY</span>
+            </div>
+
+            <div class="controls">
+              <button class="icon-button" id="prevBtn" type="button" aria-label="上一首">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 6h2v12H6zM9 12l9-6v12z"/></svg>
+              </button>
+              <button class="play-button" id="playBtn" type="button" aria-label="播放或暂停">
+                <svg id="playIcon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+              <button class="icon-button" id="nextBtn" type="button" aria-label="下一首">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg>
+              </button>
+              <button class="icon-button" id="stopBtn" type="button" aria-label="停止">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M7 7h10v10H7z"/></svg>
+              </button>
+              <button class="icon-button" id="likeBtn" type="button" aria-label="收藏当前歌曲" title="收藏当前歌曲">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 21s-7-4.35-9.25-8.75C1.1 9.03 2.8 5.5 6.25 5.5c1.95 0 3.22 1.05 3.95 2.05C10.93 6.55 12.2 5.5 14.15 5.5c3.45 0 5.15 3.53 3.5 6.75C15 16.65 12 21 12 21z"/></svg>
+              </button>
+            </div>
+
+            <button class="hide-button" id="hideQueueBtn" type="button">HIDE</button>
+
+            <label class="volume">
+              <span>VOL</span>
+              <input id="volumeSlider" type="range" min="0" max="1" step="0.01" value="0.68">
+            </label>
+
+            <div class="sleep-timer" id="sleepTimer">
+              <button id="sleepBtn" type="button" class="icon-button" title="睡眠定时器" aria-label="睡眠定时器" aria-expanded="false" aria-controls="sleepOptions">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm1 5h-2v6l5 3 .9-1.52-3.9-2.31V7z"/></svg>
+              </button>
+              <div class="sleep-options" id="sleepOptions" hidden>
+                <select id="sleepDuration" aria-label="定时时长">
+                  <option value="0">关闭</option>
+                  <option value="15">15 分钟</option>
+                  <option value="30">30 分钟</option>
+                  <option value="60">60 分钟</option>
+                  <option value="90">90 分钟</option>
+                </select>
+                <span id="sleepRemaining" hidden></span>
+              </div>
+            </div>
+          </section>
+
+          <div class="progress-row">
+            <span id="elapsedTime">0:00</span>
+            <input id="progressSlider" type="range" min="0" max="100" value="0" aria-label="播放进度">
+            <span id="durationTime">0:00</span>
           </div>
-        </div>
-        <div class="now-copy">
-          <p class="eyebrow">NOW PLAYING</p>
-          <h1 id="trackTitle">载入中</h1>
-          <p id="trackArtist">Claudio Music</p>
-        </div>
-        <div class="on-air" id="statusPill">READY</div>
-      </section>
 
-      <section class="playlist-head">
-        <h2>播放列表 <span>▶</span></h2>
-        <p id="queueCount">0 首</p>
-      </section>
+          <section class="chat-card" aria-label="AI 对话">
+            <div class="section-title">
+              <span class="dot"></span>
+              <h2>点歌和推荐</h2>
+            </div>
+            <div class="messages" id="messages"></div>
+          </section>
 
-      <section class="transport" aria-label="播放器">
-        <div class="playing-bars" aria-hidden="true">
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
+          <form class="composer" id="composer">
+            <input id="messageInput" autocomplete="off" maxlength="200" placeholder="告诉 Claudio 你想听什么歌、歌手、心情或风格">
+            <span class="char-count" id="charCount">0/200</span>
+            <button type="submit" aria-label="发送">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M3 4l18 8-18 8 3-7 8-1-8-1z"/></svg>
+            </button>
+          </form>
 
-        <div class="track-meta">
-          <strong id="transportTitle">-</strong>
-          <span id="transportState">READY</span>
-        </div>
+          <section class="chips" aria-label="快捷点歌">
+            <button type="button" data-prompt="推荐几首适合现在的歌">推荐音乐</button>
+            <button type="button" data-prompt="播放 lofi chill">播放 Lofi</button>
+            <button type="button" data-prompt="播放 Billie Eilish">点歌 Billie</button>
+            <button type="button" data-prompt="来点华语流行">华语流行</button>
+            <button type="button" data-prompt="推荐几首适合专注写代码的歌">专注</button>
+            <button type="button" data-prompt="换个心情，放松一点">放松</button>
+          </section>
+        </section>
 
-        <div class="controls">
-          <button class="icon-button" id="prevBtn" type="button" aria-label="上一首">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zM9 12l9-6v12z"/></svg>
-          </button>
-          <button class="play-button" id="playBtn" type="button" aria-label="播放或暂停">
-            <svg id="playIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-          </button>
-          <button class="icon-button" id="nextBtn" type="button" aria-label="下一首">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg>
-          </button>
-          <button class="icon-button" id="stopBtn" type="button" aria-label="停止">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
-          </button>
-          <button class="icon-button" id="likeBtn" type="button" aria-label="收藏当前歌曲" title="收藏当前歌曲">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.35-9.25-8.75C1.1 9.03 2.8 5.5 6.25 5.5c1.95 0 3.22 1.05 3.95 2.05C10.93 6.55 12.2 5.5 14.15 5.5c3.45 0 5.15 3.53 3.5 6.75C15 16.65 12 21 12 21z"/></svg>
-          </button>
-        </div>
+        <aside class="side-rail" aria-label="队列和设置">
+          <section class="playlist-head">
+            <div>
+              <h2>播放列表</h2>
+              <p id="queueCount">0 首</p>
+            </div>
+            <span>QUEUE</span>
+          </section>
 
-        <button class="hide-button" id="hideQueueBtn" type="button">HIDE</button>
+          <section class="quick-panel" aria-label="实用功能">
+            <button type="button" id="smartRecommendBtn">猜你喜欢</button>
+            <button type="button" id="recentBtn">最近播放</button>
+            <button type="button" id="favoritesBtn">我的收藏</button>
+            <button type="button" id="copyTrackBtn">复制歌曲</button>
+            <button type="button" id="refreshLibraryBtn">刷新曲库</button>
+            <button type="button" id="exportProfileBtn">导出资料</button>
+            <button type="button" id="importProfileBtn">导入资料</button>
+            <input class="sr-only" type="file" id="importProfileInput" accept="application/json,.json" aria-label="选择资料备份文件">
+            <div class="profile-backups" aria-label="最近资料备份">
+              <div class="profile-backups-head">
+                <span>最近备份</span>
+                <button type="button" id="refreshBackupsBtn">刷新</button>
+              </div>
+              <div class="profile-backup-list" id="profileBackupList" aria-live="polite">
+                <p>暂无导入前备份</p>
+              </div>
+            </div>
+          </section>
 
-        <label class="volume">
-          <span>VOL</span>
-          <input id="volumeSlider" type="range" min="0" max="1" step="0.01" value="0.68">
-        </label>
+          <section class="queue-panel" id="queuePanel" aria-label="队列">
+            <div class="panel-title">
+              <span>NEXT UP</span>
+              <div class="queue-actions">
+                <button id="shuffleBtn" type="button" class="icon-button" title="随机播放" aria-label="随机播放">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M14.83 13.41l-1.41 1.41 3.13 3.13L14.83 20l1.41 1.41L21 17.59l-4.76-4.76zM4 7h4.04l3.13 3.13 1.41-1.41L9.46 5.59 8.05 7H4v2zm12.24-4L21 7.76l-4.76 4.76-1.41-1.41 2.13-2.13H16.7l-9.66 9.66H4v-2h2.22l9.66-9.66h1.08l-2.13-2.13L16.24 3z"/></svg>
+                </button>
+                <button id="repeatBtn" type="button" class="icon-button" title="循环模式: 顺序" aria-label="循环模式">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+                </button>
+                <button id="copyQueueBtn" type="button" class="icon-button" title="复制队列" aria-label="复制队列">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                </button>
+                <button id="clearQueueBtn" type="button" class="icon-button" title="清空队列" aria-label="清空队列">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                </button>
+              </div>
+              <strong id="nextCount">0 首</strong>
+            </div>
+            <div class="queue-filter" role="search">
+              <input id="queueSearch" type="search" autocomplete="off" placeholder="筛选队列里的歌名、歌手或来源" aria-label="筛选播放队列">
+              <button id="clearQueueSearchBtn" type="button" aria-label="清除队列筛选" title="清除筛选" hidden>×</button>
+            </div>
+            <ol id="queueList"></ol>
+          </section>
 
-        <div class="sleep-timer" id="sleepTimer">
-          <button id="sleepBtn" type="button" class="icon-button" title="睡眠定时器" aria-label="睡眠定时器" aria-expanded="false" aria-controls="sleepOptions">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-1 16h-2v-2h2v2zm0-4h-2V7h2v7z"/></svg>
-          </button>
-          <div class="sleep-options" id="sleepOptions" hidden>
-            <select id="sleepDuration" aria-label="定时时长">
-              <option value="0">关闭</option>
-              <option value="15">15 分钟</option>
-              <option value="30">30 分钟</option>
-              <option value="60">60 分钟</option>
-              <option value="90">90 分钟</option>
-            </select>
-            <span id="sleepRemaining" hidden></span>
-          </div>
-        </div>
-      </section>
+          <section class="memory-card" aria-label="偏好记忆">
+            <div class="panel-title">
+              <span>MEMORY</span>
+              <strong id="memoryStatus">本地保存</strong>
+            </div>
+            <form class="memory-settings" id="memorySettings">
+              <label>
+                <span>喜欢的歌手</span>
+                <input id="prefArtists" autocomplete="off" placeholder="周杰伦, Eason Chan, Billie Eilish">
+              </label>
+              <label>
+                <span>喜欢的风格</span>
+                <input id="prefGenres" autocomplete="off" placeholder="华语流行, lofi, indie pop">
+              </label>
+              <label>
+                <span>避免风格</span>
+                <input id="prefAvoid" autocomplete="off" placeholder="电子, EDM">
+              </label>
+              <div class="ai-actions">
+                <button type="submit">保存偏好</button>
+              </div>
+            </form>
+          </section>
 
-      <div class="progress-row">
-        <span id="elapsedTime">0:00</span>
-        <input id="progressSlider" type="range" min="0" max="100" value="0" aria-label="播放进度">
-        <span id="durationTime">0:00</span>
+          <section class="ai-card" aria-label="DeepSeek 设置">
+            <div class="panel-title">
+              <span>DEEPSEEK</span>
+              <strong id="aiStatus">未连接</strong>
+            </div>
+            <form class="ai-settings" id="aiSettings">
+              <label>
+                <span>API Key</span>
+                <input id="deepseekKey" type="password" autocomplete="off" placeholder="sk-...">
+              </label>
+              <label>
+                <span>模型</span>
+                <input id="deepseekModel" autocomplete="off" value="deepseek-v4-flash">
+              </label>
+              <label>
+                <span>接口地址</span>
+                <input id="deepseekBase" autocomplete="off" value="https://api.deepseek.com">
+              </label>
+              <label class="admin-token-row" id="adminTokenRow" hidden>
+                <span>管理员口令</span>
+                <input id="adminTokenInput" type="password" autocomplete="off" placeholder="仅严格模式需要">
+              </label>
+              <div class="ai-actions">
+                <button type="submit">保存</button>
+                <button id="clearAiBtn" type="button">清除</button>
+              </div>
+            </form>
+          </section>
+        </aside>
       </div>
-
-      <section class="quick-panel" aria-label="实用功能">
-        <button type="button" id="smartRecommendBtn">猜你喜欢</button>
-        <button type="button" id="recentBtn">最近播放</button>
-        <button type="button" id="favoritesBtn">我的收藏</button>
-      </section>
-
-      <section class="queue-panel" id="queuePanel" aria-label="队列">
-        <div class="panel-title">
-          <span>NEXT UP</span>
-          <div class="queue-actions">
-            <button id="shuffleBtn" type="button" class="icon-button" title="随机播放" aria-label="随机播放">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.83 13.41l-1.41 1.41 3.13 3.13L14.83 20l1.41 1.41L21 17.59l-4.76-4.76zM4 17.59l4.76 4.76 1.41-1.41L7.04 17.8l3.13-3.13-1.41-1.41L4 17.59zM10.34 6.41L9.17 5.59 6.04 8.72H2v2h4.04l3.13 3.13 1.41-1.41L7.04 8.72l3.3-2.31zM18.83 10.72H16.7l-3.13 3.13 1.41 1.41L17.6 12.7l-3.13-3.13-1.41 1.41L16.7 14.72h2.13l-3.13 3.13 1.41 1.41L22 13.41l-3.17-2.69z"/></svg>
-            </button>
-            <button id="repeatBtn" type="button" class="icon-button" title="循环模式: 顺序" aria-label="循环模式">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
-            </button>
-            <button id="clearQueueBtn" type="button" class="icon-button" title="清空队列" aria-label="清空队列">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-            </button>
-          </div>
-          <strong id="nextCount">0 首</strong>
-        </div>
-        <ol id="queueList"></ol>
-      </section>
-
-      <section class="memory-card" aria-label="偏好记忆">
-        <div class="panel-title">
-          <span>MEMORY</span>
-          <strong id="memoryStatus">本地保存</strong>
-        </div>
-        <form class="memory-settings" id="memorySettings">
-          <label>
-            <span>喜欢的歌手</span>
-            <input id="prefArtists" autocomplete="off" placeholder="周杰伦, Eason Chan, Billie Eilish">
-          </label>
-          <label>
-            <span>喜欢的风格</span>
-            <input id="prefGenres" autocomplete="off" placeholder="华语流行, lofi, indie pop">
-          </label>
-          <label>
-            <span>避免风格</span>
-            <input id="prefAvoid" autocomplete="off" placeholder="电子, EDM">
-          </label>
-          <div class="ai-actions">
-            <button type="submit">保存偏好</button>
-          </div>
-        </form>
-      </section>
-
-      <section class="ai-card" aria-label="DeepSeek 设置">
-        <div class="panel-title">
-          <span>DEEPSEEK</span>
-          <strong id="aiStatus">未连接</strong>
-        </div>
-        <form class="ai-settings" id="aiSettings">
-          <label>
-            <span>API Key</span>
-            <input id="deepseekKey" type="password" autocomplete="off" placeholder="sk-...">
-          </label>
-          <label>
-            <span>模型</span>
-            <input id="deepseekModel" autocomplete="off" value="deepseek-v4-flash">
-          </label>
-          <label>
-            <span>接口地址</span>
-            <input id="deepseekBase" autocomplete="off" value="https://api.deepseek.com">
-          </label>
-          <div class="ai-actions">
-            <button type="submit">保存</button>
-            <button id="clearAiBtn" type="button">清除</button>
-          </div>
-        </form>
-      </section>
-
-      <section class="chat-card" aria-label="AI 对话">
-        <div class="section-title">
-          <span class="dot"></span>
-          <h2>点歌和推荐</h2>
-        </div>
-        <div class="messages" id="messages"></div>
-      </section>
-
-      <form class="composer" id="composer">
-        <input id="messageInput" autocomplete="off" maxlength="200" placeholder="告诉 Claudio 你想听什么歌、歌手、心情或风格">
-        <span class="char-count" id="charCount">0/200</span>
-        <button type="submit" aria-label="发送">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4l18 8-18 8 3-7 8-1-8-1z"/></svg>
-        </button>
-      </form>
-
-      <section class="chips" aria-label="快捷点歌">
-        <button type="button" data-prompt="推荐几首适合现在的歌">推荐音乐</button>
-        <button type="button" data-prompt="播放 lofi chill">播放 Lofi</button>
-        <button type="button" data-prompt="播放 Billie Eilish">点歌 Billie</button>
-        <button type="button" data-prompt="来点华语流行">华语流行</button>
-        <button type="button" data-prompt="推荐几首适合专注写代码的歌">专注</button>
-        <button type="button" data-prompt="换个心情，放松一点">放松</button>
-      </section>
 
       <footer class="footer">
         <span>CLAUDIO MUSIC</span>
@@ -228,14 +268,16 @@
 
     <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
-    <div class="shortcut-overlay" id="shortcutOverlay" hidden>
+    <div class="shortcut-overlay" id="shortcutOverlay" role="dialog" aria-modal="true" aria-labelledby="shortcutTitle" hidden>
       <div class="shortcut-panel">
-        <h2>⌨ 键盘快捷键</h2>
+        <h2 id="shortcutTitle">键盘快捷键</h2>
         <dl>
           <dt><kbd>Space</kbd></dt><dd>播放 / 暂停</dd>
           <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>上一首 / 下一首</dd>
           <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>音量 + / -</dd>
           <dt><kbd>F</kbd></dt><dd>收藏 / 取消收藏</dd>
+          <dt><kbd>/</kbd></dt><dd>筛选播放队列</dd>
+          <dt><kbd>C</kbd></dt><dd>复制当前歌曲</dd>
           <dt><kbd>S</kbd></dt><dd>停止播放</dd>
           <dt><kbd>?</kbd></dt><dd>显示此面板</dd>
           <dt><kbd>Esc</kbd></dt><dd>关闭此面板</dd>

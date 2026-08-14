@@ -6,11 +6,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check public/service-worker.js && node --check scripts/smoke.js && node --check scripts/smoke-http.js",
+    "check": "node --check server.js && node --check lib/http.js && node --check public/app.js && node --check public/service-worker.js && node --check scripts/smoke.js && node --check scripts/smoke-http.js && node --check scripts/smoke-http-helpers.js && node --check scripts/smoke-admin-token.js && node --check scripts/smoke-ui.js",
     "smoke": "node scripts/smoke.js",
+    "smoke:http-helpers": "node scripts/smoke-http-helpers.js",
+    "smoke:admin-token": "node scripts/smoke-admin-token.js",
     "smoke:http": "node scripts/smoke-http.js",
-    "test": "npm run check && npm run smoke && npm run smoke:http",
-    "verify": "npm test"
+    "smoke:ui": "node scripts/smoke-ui.js",
+    "test": "npm run check && npm run smoke && npm run smoke:http-helpers && npm run smoke:admin-token && npm run smoke:http",
+    "verify": "npm test && npm run smoke:ui"
   },
   "keywords": [
     "pwa",

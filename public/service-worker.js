@@ -5,14 +5,29 @@ const ASSETS = [
   "/styles.css?v=__CLAUDIO_FRONTEND_VERSION__",
   "/app.js?v=__CLAUDIO_FRONTEND_VERSION__",
   "/manifest.webmanifest",
-  "/icons/icon.svg"
+  "/icons/icon.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png"
 ];
+
+function isCacheableRequest(request) {
+  if (!request || request.method !== "GET") return false;
+
+  try {
+    const url = new URL(request.url);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 function networkFirst(request, fallbackKey = request) {
   return fetch(request).then(response => {
     if (!response || response.status !== 200) return response;
-    const copy = response.clone();
-    caches.open(CACHE).then(cache => cache.put(request, copy));
+    if (isCacheableRequest(request)) {
+      const copy = response.clone();
+      caches.open(CACHE).then(cache => cache.put(request, copy));
+    }
     return response;
   }).catch(() => caches.match(fallbackKey).then(cached => cached || new Response(null, { status: 503 })));
 }
@@ -35,7 +50,17 @@ self.addEventListener("activate", event => {
   self.clients.claim();
 });
 
+self.addEventListener("message", event => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("fetch", event => {
+  if (!isCacheableRequest(event.request)) {
+    return;
+  }
+
   const url = new URL(event.request.url);
 
   if (url.pathname.startsWith("/api/")) return;
