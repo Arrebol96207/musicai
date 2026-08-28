@@ -123,6 +123,22 @@
             <span id="durationTime">0:00</span>
           </div>
 
+          <section class="lyrics-card" id="lyricsCard" aria-label="歌词">
+            <div class="lyrics-head">
+              <div class="section-title">
+                <span class="dot"></span>
+                <h2>歌词</h2>
+              </div>
+              <div class="lyrics-head-meta">
+                <span class="lyrics-source" id="lyricsSource" hidden></span>
+                <button type="button" class="lyrics-toggle" id="lyricsToggleBtn" aria-expanded="true" aria-controls="lyricsBody">收起</button>
+              </div>
+            </div>
+            <div class="lyrics-body" id="lyricsBody">
+              <p class="lyrics-status">还没有播放歌曲</p>
+            </div>
+          </section>
+
           <section class="chat-card" aria-label="AI 对话">
             <div class="section-title">
               <span class="dot"></span>
@@ -132,6 +148,7 @@
           </section>
 
           <form class="composer" id="composer">
+            <div class="search-history" id="searchHistory" role="listbox" aria-label="最近的点歌关键词" hidden></div>
             <input id="messageInput" autocomplete="off" maxlength="200" placeholder="告诉 Claudio 你想听什么歌、歌手、心情或风格">
             <span class="char-count" id="charCount">0/200</span>
             <button type="submit" aria-label="发送">
@@ -178,30 +195,63 @@
             </div>
           </section>
 
-          <section class="queue-panel" id="queuePanel" aria-label="队列">
+          <section class="stats-card" aria-label="播放统计">
             <div class="panel-title">
-              <span>NEXT UP</span>
-              <div class="queue-actions">
-                <button id="shuffleBtn" type="button" class="icon-button" title="随机播放" aria-label="随机播放">
-                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M14.83 13.41l-1.41 1.41 3.13 3.13L14.83 20l1.41 1.41L21 17.59l-4.76-4.76zM4 7h4.04l3.13 3.13 1.41-1.41L9.46 5.59 8.05 7H4v2zm12.24-4L21 7.76l-4.76 4.76-1.41-1.41 2.13-2.13H16.7l-9.66 9.66H4v-2h2.22l9.66-9.66h1.08l-2.13-2.13L16.24 3z"/></svg>
-                </button>
-                <button id="repeatBtn" type="button" class="icon-button" title="循环模式: 顺序" aria-label="循环模式">
-                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
-                </button>
-                <button id="copyQueueBtn" type="button" class="icon-button" title="复制队列" aria-label="复制队列">
-                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                </button>
-                <button id="clearQueueBtn" type="button" class="icon-button" title="清空队列" aria-label="清空队列">
-                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                </button>
+              <span>STATS</span>
+              <strong id="statsSummary">还没有播放记录</strong>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <strong id="statPlays">0</strong>
+                <span>次播放</span>
               </div>
-              <strong id="nextCount">0 首</strong>
+              <div class="stat-item">
+                <strong id="statListenTime">0 分钟</strong>
+                <span>累计收听</span>
+              </div>
             </div>
-            <div class="queue-filter" role="search">
-              <input id="queueSearch" type="search" autocomplete="off" placeholder="筛选队列里的歌名、歌手或来源" aria-label="筛选播放队列">
-              <button id="clearQueueSearchBtn" type="button" aria-label="清除队列筛选" title="清除筛选" hidden>×</button>
+            <ol class="stats-top" id="statsTop"></ol>
+          </section>
+
+          <section class="queue-panel" id="queuePanel" aria-label="队列">
+            <div class="panel-tabs" role="tablist" aria-label="队列面板视图">
+              <button type="button" id="tabQueueBtn" class="panel-tab active" role="tab" aria-selected="true" aria-controls="queueView">播放队列</button>
+              <button type="button" id="tabLibraryBtn" class="panel-tab" role="tab" aria-selected="false" aria-controls="libraryView">本地曲库</button>
             </div>
-            <ol id="queueList"></ol>
+            <div class="queue-view" id="queueView" role="tabpanel">
+              <div class="panel-title">
+                <span>NEXT UP</span>
+                <div class="queue-actions">
+                  <button id="shuffleBtn" type="button" class="icon-button" title="随机播放" aria-label="随机播放">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M14.83 13.41l-1.41 1.41 3.13 3.13L14.83 20l1.41 1.41L21 17.59l-4.76-4.76zM4 7h4.04l3.13 3.13 1.41-1.41L9.46 5.59 8.05 7H4v2zm12.24-4L21 7.76l-4.76 4.76-1.41-1.41 2.13-2.13H16.7l-9.66 9.66H4v-2h2.22l9.66-9.66h1.08l-2.13-2.13L16.24 3z"/></svg>
+                  </button>
+                  <button id="repeatBtn" type="button" class="icon-button" title="循环模式: 顺序" aria-label="循环模式">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+                  </button>
+                  <button id="copyQueueBtn" type="button" class="icon-button" title="复制队列" aria-label="复制队列">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                  </button>
+                  <button id="clearQueueBtn" type="button" class="icon-button" title="清空队列" aria-label="清空队列">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  </button>
+                </div>
+                <strong id="nextCount">0 首</strong>
+              </div>
+              <div class="queue-filter" role="search">
+                <input id="queueSearch" type="search" autocomplete="off" placeholder="筛选队列里的歌名、歌手或来源" aria-label="筛选播放队列">
+                <button id="clearQueueSearchBtn" type="button" aria-label="清除队列筛选" title="清除筛选" hidden>×</button>
+              </div>
+              <ol id="queueList"></ol>
+            </div>
+            <div class="library-view" id="libraryView" role="tabpanel" hidden>
+              <div class="library-tools">
+                <input id="librarySearch" type="search" autocomplete="off" placeholder="搜索本地曲库的歌名或歌手" aria-label="搜索本地曲库">
+                <button type="button" id="refreshLibraryViewBtn" title="重新扫描 music 文件夹" aria-label="重新扫描本地曲库">刷新</button>
+                <button type="button" id="playAllLibraryBtn" title="把本地曲库全部加入队列并播放">全部播放</button>
+              </div>
+              <p class="library-summary" id="librarySummary" aria-live="polite">尚未加载</p>
+              <ol id="libraryList"></ol>
+            </div>
           </section>
 
           <section class="memory-card" aria-label="偏好记忆">
@@ -226,6 +276,31 @@
                 <button type="submit">保存偏好</button>
               </div>
             </form>
+          </section>
+
+          <section class="eq-card" id="eqCard" aria-label="均衡器">
+            <div class="panel-title">
+              <span>EQ</span>
+              <strong id="eqStatus">未启用</strong>
+            </div>
+            <div class="eq-controls">
+              <label class="eq-enable-row">
+                <input type="checkbox" id="eqEnabled">
+                <span>启用均衡器</span>
+              </label>
+              <label class="eq-preset-row">
+                <span>预设</span>
+                <select id="eqPreset" aria-label="均衡器预设"></select>
+              </label>
+              <label class="eq-preamp-row">
+                <span>前置增益</span>
+                <input type="range" id="eqPreamp" min="-6" max="6" step="0.5" value="0" aria-label="前置增益">
+                <output id="eqPreampValue">0 dB</output>
+              </label>
+            </div>
+            <div class="eq-bands" id="eqBands"></div>
+            <canvas class="eq-spectrum" id="eqSpectrum" width="240" height="96" aria-hidden="true"></canvas>
+            <p class="eq-notice" id="eqNotice" hidden></p>
           </section>
 
           <section class="ai-card" aria-label="DeepSeek 设置">
@@ -286,6 +361,7 @@
       </div>
     </div>
 
+    <script src="/eq.js?v=__CLAUDIO_FRONTEND_VERSION__" defer></script>
     <script src="/app.js?v=__CLAUDIO_FRONTEND_VERSION__" defer></script>
   </body>
 </html>

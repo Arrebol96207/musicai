@@ -3,6 +3,7 @@ const ASSETS = [
   "/",
   "/index.html",
   "/styles.css?v=__CLAUDIO_FRONTEND_VERSION__",
+  "/eq.js?v=__CLAUDIO_FRONTEND_VERSION__",
   "/app.js?v=__CLAUDIO_FRONTEND_VERSION__",
   "/manifest.webmanifest",
   "/icons/icon.svg",
