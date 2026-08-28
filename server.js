@@ -848,8 +848,13 @@ function apiUrl(base, endpoint, params = {}) {
   return url;
 }
 
-async function fetchJson(url, timeoutMs = 12000) {
+async function fetchJson(url, timeoutMs = 12000, externalSignal) {
   const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
@@ -868,11 +873,17 @@ async function fetchJson(url, timeoutMs = 12000) {
     throw createAppError("上游音乐服务暂时不可用。", 502, "UPSTREAM_UNAVAILABLE", { upstream: error.message });
   } finally {
     clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
 
-async function postJson(url, body, headers = {}, timeoutMs = 12000) {
+async function postJson(url, body, headers = {}, timeoutMs = 12000, externalSignal) {
   const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
@@ -901,6 +912,7 @@ async function postJson(url, body, headers = {}, timeoutMs = 12000) {
     throw createAppError("上游服务暂时不可用。", 502, "UPSTREAM_UNAVAILABLE", { upstream: error.message });
   } finally {
     clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -967,43 +979,43 @@ function normalizeRadio(station) {
   };
 }
 
-async function searchAudius(query, limit = 8) {
+async function searchAudius(query, limit = 8, signal) {
   const json = await fetchJson(apiUrl(AUDIUS_API_BASE, "/tracks/search", {
     query,
     limit,
     sort_method: "relevant",
     app_name: APP_NAME
-  }));
+  }), 12000, signal);
   return (json.data || []).map(normalizeAudius);
 }
 
-async function resolveAudius(track) {
+async function resolveAudius(track, signal) {
   const json = await fetchJson(apiUrl(AUDIUS_API_BASE, `/tracks/${track.providerId}/stream`, {
     no_redirect: "true",
     app_name: APP_NAME
-  }));
+  }), 12000, signal);
   const url = typeof json.data === "string" ? json.data : null;
   if (!url) throw createAppError("Audius 没有返回可播放地址。", 502, "UPSTREAM_NO_AUDIO");
   return { ...track, audioUrl: url };
 }
 
-async function searchDeezer(query, limit = 8) {
-  const json = await fetchJson(apiUrl(DEEZER_API_BASE, "/search", { q: query, limit }));
+async function searchDeezer(query, limit = 8, signal) {
+  const json = await fetchJson(apiUrl(DEEZER_API_BASE, "/search", { q: query, limit }), 12000, signal);
   return (json.data || []).map(normalizeDeezer).filter(track => track.audioUrl);
 }
 
-async function searchItunes(query, limit = 8) {
+async function searchItunes(query, limit = 8, signal) {
   const json = await fetchJson(apiUrl(ITUNES_API_BASE, "/search", {
     term: query,
     media: "music",
     entity: "song",
     limit,
     country: "US"
-  }));
+  }), 12000, signal);
   return (json.results || []).map(normalizeItunes).filter(track => track.audioUrl);
 }
 
-async function searchRadio(query, limit = 8) {
+async function searchRadio(query, limit = 8, signal) {
   const cleaned = query.replace(/\bradio\b/gi, "").replace(/电台|广播|fm/gi, "").trim() || query;
   const json = await fetchJson(apiUrl(RADIO_BROWSER_BASE, "/json/stations/search", {
     name: cleaned,
@@ -1012,7 +1024,7 @@ async function searchRadio(query, limit = 8) {
     order: "votes",
     reverse: "true",
     hidebroken: "true"
-  }));
+  }), 12000, signal);
   return (Array.isArray(json) ? json : []).map(normalizeRadio).filter(track => track.audioUrl);
 }
 
@@ -1399,9 +1411,12 @@ async function runLimited(items, limit, worker) {
   return results;
 }
 
-function withTimeout(promise, ms) {
+function withTimeout(promise, ms, signal) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(createAppError("上游音乐服务请求超时。", 504, "UPSTREAM_TIMEOUT")), ms);
+    const timer = setTimeout(() => {
+      if (signal) signal.abort();
+      reject(createAppError("上游音乐服务请求超时。", 504, "UPSTREAM_TIMEOUT"));
+    }, ms);
     promise.then(
       value => { clearTimeout(timer); resolve(value); },
       error => { clearTimeout(timer); reject(error); }
@@ -1415,31 +1430,32 @@ async function playableFromQuery(query, options = {}) {
   if (cached) return cached;
   const failures = [];
   const totalBudgetMs = Math.min(20000, Math.max(8000, REQUEST_TIMEOUT_MS - 2000));
+  const budget = new AbortController();
 
   const searchTasks = [
-    { name: "Audius", fn: async () => {
-      const audius = musicCandidates(await searchAudius(query, 8), query, options);
+    { name: "Audius", fn: async signal => {
+      const audius = musicCandidates(await searchAudius(query, 8, signal), query, options);
       for (const track of audius.slice(0, 3)) {
-        try { return await resolveAudius(track); } catch (e) { failures.push(sourceFailure("Audius", e)); }
+        try { return await resolveAudius(track, signal); } catch (e) { failures.push(sourceFailure("Audius", e)); }
       }
       if (!audius.length) failures.push(sourceFailure("Audius", createAppError("Audius 没有匹配结果。", 502, "UPSTREAM_EMPTY")));
       throw createAppError("Audius 无可播放结果", 502, "UPSTREAM_EMPTY");
     }},
-    { name: "Deezer", fn: async () => {
-      const deezer = musicCandidates(await searchDeezer(query, 8), query, options);
+    { name: "Deezer", fn: async signal => {
+      const deezer = musicCandidates(await searchDeezer(query, 8, signal), query, options);
       if (deezer.length) return deezer[0];
       failures.push(sourceFailure("Deezer", createAppError("Deezer 没有可播放预览。", 502, "UPSTREAM_EMPTY")));
       throw createAppError("Deezer 无可播放结果", 502, "UPSTREAM_EMPTY");
     }},
-    { name: "iTunes", fn: async () => {
-      const previews = musicCandidates(await searchItunes(query, 8), query, options);
+    { name: "iTunes", fn: async signal => {
+      const previews = musicCandidates(await searchItunes(query, 8, signal), query, options);
       if (previews.length) return previews[0];
       failures.push(sourceFailure("iTunes", createAppError("iTunes 没有可播放预览。", 502, "UPSTREAM_EMPTY")));
       throw createAppError("iTunes 无可播放结果", 502, "UPSTREAM_EMPTY");
     }}
   ];
 
-  const results = await Promise.allSettled(searchTasks.map(t => withTimeout(t.fn(), totalBudgetMs)));
+  const results = await Promise.allSettled(searchTasks.map(t => withTimeout(t.fn(budget.signal), totalBudgetMs, budget.signal)));
   for (const r of results) {
     if (r.status === "fulfilled") {
       setSearchCache(cacheKey, r.value);
@@ -1449,7 +1465,7 @@ async function playableFromQuery(query, options = {}) {
 
   if (options.allowRadio) {
     try {
-      const radios = await searchRadio(query, 8);
+      const radios = await searchRadio(query, 8, budget.signal);
       if (radios.length) {
         setSearchCache(cacheKey, radios[0]);
         return radios[0];
