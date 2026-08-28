@@ -8,6 +8,7 @@ const required = [
   "lib/http.js",
   "public/index.html",
   "public/app.js",
+  "public/eq.js",
   "public/styles.css",
   "public/manifest.webmanifest",
   "public/service-worker.js",
@@ -42,6 +43,7 @@ function parseJson(file) {
 
 const html = read("public/index.html");
 const app = read("public/app.js");
+const eq = read("public/eq.js");
 const server = read("server.js");
 const httpHelpers = read("lib/http.js");
 const serviceWorker = read("public/service-worker.js");
@@ -269,6 +271,33 @@ check("Radio is explicit fallback only", server.includes("wantsRadio") && server
 check("User profile is ignored by git", gitignore.includes("user/"));
 check("Local music files are ignored by git", gitignore.includes("music/*") && gitignore.includes("!music/README.md"));
 check("Track library is JSON array", Array.isArray(tracks));
+
+// ===== F1: 本地曲库浏览 + 真实时长 =====
+check("Client renders library tab UI", html.includes('id="tabLibraryBtn"') && app.includes("async function loadLibrary") && app.includes("function renderLibrary") && app.includes("/api/library/tracks"));
+check("Server exposes local library tracks endpoint", server.includes('["/api/library/tracks", defineRoutePolicy(["GET", "HEAD"])]') && server.includes("function localFileTracks"));
+check("Server exposes queue-only add endpoint", server.includes('["/api/queue/add", defineRoutePolicy(["POST"])]') && app.includes("/api/queue/add"));
+check("Server parses real FLAC durations", server.includes("function flacDurationSeconds") && server.includes("totalSamples"));
+
+// ===== F2: 歌词 =====
+check("Client renders lyrics card", html.includes('id="lyricsCard"') && app.includes("function parseLrc") && app.includes("function updateLyricsHighlight") && styles.includes(".lyrics-card"));
+check("Server exposes lyrics endpoint", server.includes('"/api/music/lyrics"') && server.includes("function flacEmbeddedLyrics"));
+check("Server searches LRCLIB for online lyrics", server.includes("lrclib.net") && server.includes("searchLrcLib"));
+
+// ===== F3: 均衡器 =====
+check("HTML loads eq.js before app.js", html.includes(`/eq.js?v=${versionToken}`) && html.indexOf("/eq.js?v=") < html.indexOf("/app.js?v="));
+check("EQ module exposes ClaudioEQ", eq.includes("window.ClaudioEQ") && eq.includes("createMediaElementSource") && eq.includes("createBiquadFilter") && eq.includes("createAnalyser"));
+check("EQ card exists in sidebar with styles", html.includes('id="eqCard"') && html.includes('id="eqBands"') && html.includes('id="eqSpectrum"') && styles.includes(".eq-card") && styles.includes(".eq-bands"));
+check("Client integrates EQ element picker", app.includes("window.ClaudioEQ?.currentElement()") && app.includes("window.ClaudioEQ?.prepare(track)") && app.includes("window.ClaudioEQ?.elements()") && !app.includes("AudioContext"));
+check("EQ module keeps presets and passthrough", eq.includes('"低音增强"') && eq.includes("passthroughNotice") && eq.includes("attachVisualizer"));
+check("Server persists eq settings with clamping", server.includes("function normalizeEqSettings") && server.includes("EQ_PRESET_KEYS") && server.includes("next.eq = normalizeEqSettings") && server.includes("settings.eq = normalizeEqSettings(settings.eq)"));
+check("Frontend version hashes eq.js", server.includes('fileVersion(path.join(PUBLIC_DIR, "eq.js"))'));
+check("Service worker precaches eq.js", serviceWorker.includes(`/eq.js?v=${versionToken}`));
+
+// ===== F4: 搜索历史 + 播放统计 =====
+check("Client renders search history dropdown", html.includes('id="searchHistory"') && app.includes("function renderSearchHistoryOptions") && app.includes("function selectSearchHistoryOption") && styles.includes(".search-history"));
+check("Client renders playback stats card", html.includes('id="statsTop"') && app.includes("function renderStats") && app.includes("function statsTopEntries") && styles.includes(".stats-card"));
+check("Client reports listening time", app.includes("function flushListened") && app.includes("function flushListenedWithBeacon") && app.includes("/api/user/listened") && app.includes('"pagehide"'));
+check("Server records search history and play stats", server.includes("function recordSearchQuery") && server.includes("function bumpPlayStats") && server.includes('["/api/user/listened", defineRoutePolicy(["POST"])]'));
 
 if (failed.length) {
   console.error(`Failed checks:\n- ${failed.join("\n- ")}`);

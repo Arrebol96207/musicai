@@ -158,6 +158,50 @@ function cdp(method, params = {}, timeoutMs = 15000) {
   });
 }
 
+function cdpSend(socket, method, params = {}, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      reject(new Error(`CDP socket is not open for ${method}.`));
+      return;
+    }
+    const id = ++messageId;
+    const timeout = setTimeout(() => {
+      socket.removeEventListener("message", onMessage);
+      reject(new Error(`${method} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    const onMessage = event => {
+      let payload;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (payload.id !== id) return;
+      clearTimeout(timeout);
+      socket.removeEventListener("message", onMessage);
+      if (payload.error) reject(new Error(payload.error.message || method));
+      else resolve(payload.result || {});
+    };
+    socket.addEventListener("message", onMessage);
+    socket.send(JSON.stringify({ id, method, params }));
+  });
+}
+
+async function gracefullyCloseEdgeOnPort(port) {
+  // Edge 注册了 RegisterApplicationRestart：强杀会被 Windows 重启管理器按原参数复活，
+  // 复活的无头进程会一直锁住 profile 目录导致下次 rmSync EBUSY，因此必须走 CDP 优雅关闭
+  try {
+    const version = await requestJson(`http://127.0.0.1:${port}/json/version`, { timeout: 1200 });
+    if (!version?.webSocketDebuggerUrl) return;
+    const socket = await connectCdp(version.webSocketDebuggerUrl);
+    await cdpSend(socket, "Browser.close", {}, 3000).catch(() => {});
+    try {
+      socket.close();
+    } catch {}
+    await delay(1500);
+  } catch {}
+}
+
 async function openTarget(url) {
   const target = await requestJson(`http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent(url)}`, { method: "PUT" });
   activeTargetId = target.id || "";
@@ -689,7 +733,15 @@ async function main() {
   originalBackups = snapshotDirectory(backupDir);
 
   fs.mkdirSync(outDir, { recursive: true });
-  fs.rmSync(profileDir, { recursive: true, force: true });
+  if (fs.existsSync(profileDir)) {
+    await gracefullyCloseEdgeOnPort(cdpPort);
+    try {
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    } catch {
+      await delay(1500);
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    }
+  }
   fs.mkdirSync(profileDir, { recursive: true });
 
   server = spawn(process.execPath, ["server.js"], {
@@ -799,7 +851,12 @@ async function main() {
 
 async function cleanup() {
   await closeActiveTarget();
-  if (browser && browser.exitCode === null) browser.kill("SIGKILL");
+  await gracefullyCloseEdgeOnPort(cdpPort);
+  if (browser && browser.exitCode === null) {
+    browser.kill("SIGKILL");
+    await delay(500);
+    if (browser.exitCode === null) browser.kill("SIGKILL");
+  }
   if (server && server.exitCode === null) {
     server.kill("SIGTERM");
     await delay(500);

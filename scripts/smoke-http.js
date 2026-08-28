@@ -291,6 +291,20 @@ async function main() {
     });
     if (crossOriginLibraryRefresh.status !== 403 || crossOriginLibraryRefresh.json?.code !== "FORBIDDEN_ORIGIN") fail("Library refresh rejects cross-origin browser writes");
 
+    const libraryTracks = await request("/api/library/tracks");
+    if (libraryTracks.status !== 200 || libraryTracks.json?.ok !== true) fail("Library tracks endpoint returns 200 with ok payload");
+    if (!Array.isArray(libraryTracks.json?.tracks) || libraryTracks.json.count !== libraryTracks.json.tracks.length) fail("Library tracks endpoint returns track array with count");
+    const smokeTrack = libraryTracks.json.tracks.find(track => track.audioUrl === `/music/${encodeURIComponent(smokeLibraryFileName)}`);
+    if (!smokeTrack || smokeTrack.source !== "local") fail("Library tracks endpoint lists local music files");
+    if (smokeTrack.duration !== 180) fail("Library tracks falls back to default duration for files without metadata");
+
+    const lyricsNoParams = await request("/api/music/lyrics");
+    if (lyricsNoParams.status !== 400 || lyricsNoParams.json?.code !== "VALIDATION_ERROR") fail("Lyrics endpoint requires title or trackId");
+
+    const lyricsUnknownTrack = await request(`/api/music/lyrics?trackId=smoke-unknown-${Date.now()}`);
+    if (lyricsUnknownTrack.status !== 200 || lyricsUnknownTrack.json?.ok !== true) fail("Lyrics endpoint returns 200 for unknown tracks");
+    if (lyricsUnknownTrack.json?.lyrics?.source !== "none") fail("Lyrics endpoint reports no lyrics for unknown local tracks");
+
     const apiPreflight = await request("/api/play", {
       method: "OPTIONS",
       headers: {
@@ -449,6 +463,51 @@ async function main() {
     });
     if (repeatSettings.status !== 200 || repeatSettings.json?.settings?.repeatMode !== 1) fail("Settings endpoint persists repeat mode");
     if (repeatSettings.json?.profile?.settings?.repeatMode !== 1) fail("Profile exposes persisted repeat mode");
+
+    const eqSettings = await request("/api/user/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        settings: {
+          eq: {
+            enabled: true,
+            preset: "bass",
+            preamp: 99,
+            gains: [50, -99, "x", 3]
+          }
+        }
+      })
+    });
+    const savedEq = eqSettings.json?.settings?.eq;
+    if (eqSettings.status !== 200 || savedEq?.enabled !== true || savedEq?.preset !== "bass") fail("Settings endpoint persists eq enable state and preset");
+    if (savedEq?.preamp !== 6) fail("Eq preamp clamps to +6 dB");
+    if (savedEq?.gains?.length !== 10 || savedEq.gains[0] !== 12 || savedEq.gains[1] !== -12 || savedEq.gains[2] !== 0 || savedEq.gains[3] !== 3) fail("Eq gains clamp to -12..+12 and pad to 10 bands");
+
+    const eqInvalidPreset = await request("/api/user/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: { eq: { preset: "disco" } } })
+    });
+    if (eqInvalidPreset.json?.settings?.eq?.preset !== "flat") fail("Eq preset falls back to flat for unknown presets");
+    if (eqInvalidPreset.json?.settings?.eq?.gains?.[0] !== 12 || eqInvalidPreset.json?.settings?.eq?.enabled !== true) fail("Partial eq updates keep existing values");
+
+    const eqProfile = await request("/api/user/profile");
+    if (eqProfile.json?.profile?.settings?.eq?.preset !== "flat" || eqProfile.json?.profile?.settings?.eq?.gains?.length !== 10) fail("Profile exposes persisted eq settings");
+
+    const listened = await request("/api/user/listened", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seconds: 90 })
+    });
+    if (listened.status !== 200 || listened.json?.ok !== true) fail("Listened endpoint accepts listening time");
+    if (listened.json?.stats?.totalMs !== 90000) fail("Listened endpoint accumulates listening time");
+
+    const listenedInvalid = await request("/api/user/listened", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seconds: -100 })
+    });
+    if (listenedInvalid.status !== 200 || listenedInvalid.json?.stats?.totalMs !== 90000) fail("Listened endpoint clamps negative seconds to zero");
 
     const postNext = await request("/api/next", {
       method: "POST",
