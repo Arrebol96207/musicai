@@ -97,12 +97,15 @@ const APP_VERSION = process.env.CLAUDIO_APP_VERSION || fileVersion(__filename);
 const FRONTEND_VERSION = process.env.CLAUDIO_FRONTEND_VERSION || [
   fileVersion(path.join(PUBLIC_DIR, "index.html")),
   fileVersion(path.join(PUBLIC_DIR, "styles.css")),
+  fileVersion(path.join(PUBLIC_DIR, "eq.js")),
   fileVersion(path.join(PUBLIC_DIR, "app.js")),
   fileVersion(path.join(PUBLIC_DIR, "service-worker.js"))
 ].join(".");
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"];
 const HISTORY_LIMIT = 50;
 const FAVORITE_LIMIT = 200;
+const SEARCH_HISTORY_LIMIT = 20;
+const STATS_TOP_LIMIT = 100;
 const PREFERENCE_LIMIT = 30;
 const MAX_MESSAGES = 200;
 const DYNAMIC_TRACKS_LIMIT = 200;
@@ -186,6 +189,12 @@ const recommendationSeeds = {
 const defaultProfile = {
   favorites: [],
   history: [],
+  searchHistory: [],
+  stats: {
+    totalPlays: 0,
+    totalMs: 0,
+    top: {}
+  },
   preferences: {
     artists: [],
     genres: [],
@@ -197,7 +206,13 @@ const defaultProfile = {
     volume: 0.68,
     repeatMode: 0,
     lastPrompt: "",
-    lastScene: ""
+    lastScene: "",
+    eq: {
+      enabled: false,
+      preset: "flat",
+      preamp: 0,
+      gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    }
   }
 };
 
@@ -387,6 +402,69 @@ function sanitizeTrackSnapshot(track) {
   return snapshot;
 }
 
+function normalizeSearchHistory(value) {
+  const input = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const items = [];
+  input.forEach(item => {
+    const cleaned = String(item || "").trim().slice(0, 200);
+    if (!cleaned) return;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(cleaned);
+  });
+  return items.slice(0, SEARCH_HISTORY_LIMIT);
+}
+
+function normalizeStats(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const topSource = source.top && typeof source.top === "object" && !Array.isArray(source.top) ? source.top : {};
+  const top = {};
+  Object.entries(topSource).forEach(([id, entry]) => {
+    const key = String(id || "").slice(0, 120);
+    const record = entry && typeof entry === "object" ? entry : {};
+    const count = Math.max(0, Math.round(Number(record.count) || 0));
+    if (!key || !count) return;
+    top[key] = {
+      title: String(record.title || "Untitled").slice(0, 160),
+      artist: String(record.artist || "Unknown Artist").slice(0, 160),
+      count
+    };
+  });
+  const topKeys = Object.keys(top);
+  while (topKeys.length > STATS_TOP_LIMIT) {
+    let minKey = topKeys[0];
+    topKeys.forEach(key => {
+      if (top[key].count < top[minKey].count) minKey = key;
+    });
+    delete top[minKey];
+    topKeys.splice(topKeys.indexOf(minKey), 1);
+  }
+  return {
+    totalPlays: Math.max(0, Math.round(Number(source.totalPlays) || 0)),
+    totalMs: Math.max(0, Math.round(Number(source.totalMs) || 0)),
+    top
+  };
+}
+
+const EQ_PRESET_KEYS = ["flat", "pop", "rock", "jazz", "classical", "electronic", "vocal", "bass", "custom"];
+
+function normalizeEqSettings(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const gains = Array.from({ length: 10 }, (_, index) => {
+    const value = Number(source.gains?.[index]);
+    return Number.isFinite(value) ? Math.max(-12, Math.min(12, value)) : 0;
+  });
+  const preamp = Number(source.preamp);
+  return {
+    enabled: source.enabled === true,
+    preset: EQ_PRESET_KEYS.includes(source.preset) ? source.preset : "flat",
+    preamp: Number.isFinite(preamp) ? Math.max(-6, Math.min(6, preamp)) : 0,
+    gains
+  };
+}
+
 function normalizeProfile(raw = {}) {
   const settings = { ...defaultProfile.settings, ...(raw.settings || {}) };
   settings.theme = settings.theme === "light" ? "light" : "dark";
@@ -394,10 +472,13 @@ function normalizeProfile(raw = {}) {
   settings.repeatMode = Math.max(0, Math.min(2, Math.round(Number(settings.repeatMode ?? defaultProfile.settings.repeatMode))));
   settings.lastPrompt = String(settings.lastPrompt || "").slice(0, 160);
   settings.lastScene = String(settings.lastScene || "").slice(0, 80);
+  settings.eq = normalizeEqSettings(settings.eq);
 
   return {
     favorites: Array.isArray(raw.favorites) ? raw.favorites.map(sanitizeTrackSnapshot).filter(Boolean).slice(0, FAVORITE_LIMIT) : [],
     history: Array.isArray(raw.history) ? raw.history.map(sanitizeTrackSnapshot).filter(Boolean).slice(0, HISTORY_LIMIT) : [],
+    searchHistory: normalizeSearchHistory(raw.searchHistory),
+    stats: normalizeStats(raw.stats),
     preferences: {
       artists: stringList(raw.preferences?.artists),
       genres: stringList(raw.preferences?.genres),
@@ -489,6 +570,100 @@ function titleFromFile(fileName) {
   return path.basename(fileName, path.extname(fileName)).replace(/[_-]+/g, " ").trim() || fileName;
 }
 
+function flacMetadataBlocks(filePath, maxScanBytes = 1024 * 1024) {
+  let fd = null;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const magic = Buffer.alloc(4);
+    if (fs.readSync(fd, magic, 0, 4, 0) !== 4) return null;
+    if (magic.toString("latin1") !== "fLaC") return null;
+    const blocks = [];
+    let offset = 4;
+    const header = Buffer.alloc(4);
+    while (offset < maxScanBytes) {
+      if (fs.readSync(fd, header, 0, 4, offset) !== 4) break;
+      const isLast = (header[0] & 0x80) !== 0;
+      const type = header[0] & 0x7f;
+      const length = (header[1] << 16) | (header[2] << 8) | header[3];
+      blocks.push({ type, dataOffset: offset + 4, length });
+      offset += 4 + length;
+      if (isLast) break;
+    }
+    return blocks;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+function flacDurationSeconds(filePath) {
+  let fd = null;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const header = Buffer.alloc(42);
+    if (fs.readSync(fd, header, 0, 42, 0) !== 42) return 0;
+    if (header.toString("latin1", 0, 4) !== "fLaC") return 0;
+    if ((header[4] & 0x7f) !== 0) return 0;
+    const sampleRate = (header[18] << 12) | (header[19] << 4) | (header[20] >> 4);
+    if (!sampleRate) return 0;
+    const totalSamples = (header[21] & 0x0f) * 2 ** 32
+      + header[22] * 2 ** 24
+      + header[23] * 2 ** 16
+      + header[24] * 2 ** 8
+      + header[25];
+    if (!totalSamples) return 0;
+    return Math.round(totalSamples / sampleRate);
+  } catch {
+    return 0;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+function flacEmbeddedLyrics(filePath) {
+  const blocks = flacMetadataBlocks(filePath);
+  if (!blocks) return null;
+  const block = blocks.find(item => item.type === 4);
+  if (!block || !block.length || block.length > 1024 * 1024) return null;
+  let fd = null;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(block.length);
+    if (fs.readSync(fd, buf, 0, block.length, block.dataOffset) !== block.length) return null;
+    let pos = 0;
+    if (pos + 4 > buf.length) return null;
+    const vendorLength = buf.readUInt32LE(pos);
+    pos += 4;
+    if (vendorLength > buf.length - pos) return null;
+    pos += vendorLength;
+    if (pos + 4 > buf.length) return null;
+    const count = buf.readUInt32LE(pos);
+    pos += 4;
+    const lyricKeys = ["lyrics", "unsyncedlyrics", "unsynced lyrics", "syncedlyrics"];
+    for (let i = 0; i < count && pos < buf.length; i += 1) {
+      if (pos + 4 > buf.length) break;
+      const length = buf.readUInt32LE(pos);
+      pos += 4;
+      if (length > buf.length - pos) break;
+      const entry = buf.toString("utf8", pos, pos + length);
+      pos += length;
+      const eq = entry.indexOf("=");
+      if (eq <= 0) continue;
+      const key = entry.slice(0, eq).trim().toLowerCase();
+      if (lyricKeys.includes(key)) {
+        const value = entry.slice(eq + 1).trim();
+        if (value) return value;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
 function localFileTracks() {
   try {
     return fs.readdirSync(MUSIC_DIR, { withFileTypes: true })
@@ -497,7 +672,7 @@ function localFileTracks() {
         id: trackIdFromFile(entry.name),
         title: titleFromFile(entry.name),
         artist: "本地音乐",
-        duration: 180,
+        duration: flacDurationSeconds(path.join(MUSIC_DIR, entry.name)) || 180,
         source: "local",
         audioUrl: `/music/${encodeURIComponent(entry.name)}`,
         note: "Local music file"
@@ -644,6 +819,8 @@ function publicProfile() {
   return {
     favorites: userProfile.favorites,
     history: userProfile.history,
+    searchHistory: userProfile.searchHistory,
+    stats: userProfile.stats,
     preferences: userProfile.preferences,
     settings: userProfile.settings,
     favoriteIds: userProfile.favorites.map(track => track.id)
@@ -1028,6 +1205,21 @@ async function searchRadio(query, limit = 8, signal) {
   return (Array.isArray(json) ? json : []).map(normalizeRadio).filter(track => track.audioUrl);
 }
 
+const LRCLIB_API_BASE = "https://lrclib.net";
+
+async function searchLrcLib(title, artist) {
+  const json = await fetchJson(apiUrl(LRCLIB_API_BASE, "/api/search", {
+    track_name: title,
+    artist_name: artist || ""
+  }), 10000);
+  if (!Array.isArray(json)) return null;
+  const synced = json.find(item => item && typeof item.syncedLyrics === "string" && item.syncedLyrics.trim());
+  if (synced) return { text: synced.syncedLyrics.trim(), synced: true, source: "lrclib" };
+  const plain = json.find(item => item && typeof item.plainLyrics === "string" && item.plainLyrics.trim());
+  if (plain) return { text: plain.plainLyrics.trim(), synced: false, source: "lrclib" };
+  return null;
+}
+
 function detectMood(text) {
   const value = String(text || "").toLowerCase();
   if (/开心|兴奋|快乐|愉快|happy|party|high/.test(value)) return "happy";
@@ -1126,6 +1318,40 @@ function setFavorite(track, explicitFavorite) {
   return { favorite: shouldFavorite, track: snapshot };
 }
 
+function recordSearchQuery(query) {
+  const cleaned = String(query || "").trim().slice(0, 200);
+  if (!cleaned) return;
+  userProfile.searchHistory = [
+    cleaned,
+    ...userProfile.searchHistory.filter(item => item.toLowerCase() !== cleaned.toLowerCase())
+  ].slice(0, SEARCH_HISTORY_LIMIT);
+  saveProfile();
+}
+
+function bumpPlayStats(played) {
+  if (!played?.id) return;
+  const stats = userProfile.stats;
+  stats.totalPlays += 1;
+  const current = stats.top[played.id];
+  if (current) {
+    current.count += 1;
+  } else {
+    stats.top[played.id] = {
+      title: played.title || "Untitled",
+      artist: played.artist || "Unknown Artist",
+      count: 1
+    };
+  }
+  const topKeys = Object.keys(stats.top);
+  if (topKeys.length > STATS_TOP_LIMIT) {
+    let minKey = topKeys[0];
+    topKeys.forEach(key => {
+      if (stats.top[key].count < stats.top[minKey].count) minKey = key;
+    });
+    delete stats.top[minKey];
+  }
+}
+
 function addHistory(track, context = "play") {
   const snapshot = sanitizeTrackSnapshot(withRuntime(track));
   if (!snapshot) return null;
@@ -1136,6 +1362,7 @@ function addHistory(track, context = "play") {
   const genre = inferGenreFromTrack(played);
   userProfile.preferences.artists = mergeUnique(userProfile.preferences.artists, [played.artist]);
   if (genre) userProfile.preferences.genres = mergeUnique(userProfile.preferences.genres, [genre]);
+  bumpPlayStats(played);
   saveProfile();
   return played;
 }
@@ -1147,6 +1374,7 @@ function updateSettings(settings = {}) {
   if (typeof settings.repeatMode === "number") next.repeatMode = Math.max(0, Math.min(2, Math.round(settings.repeatMode)));
   if (settings.lastPrompt !== undefined) next.lastPrompt = String(settings.lastPrompt || "").slice(0, 160);
   if (settings.lastScene !== undefined) next.lastScene = String(settings.lastScene || "").slice(0, 80);
+  if (settings.eq !== undefined) next.eq = normalizeEqSettings({ ...next.eq, ...settings.eq });
   userProfile.settings = next;
   state.volume = next.volume;
   saveProfile();
@@ -1363,6 +1591,25 @@ function noPlayableMusicError(query, failures) {
 }
 
 const searchCache = new Map();
+
+const lyricsCache = new Map();
+const LYRICS_CACHE_LIMIT = 200;
+const NO_LYRICS = { text: "", synced: false, source: "none" };
+
+function lyricsCacheKey(prefix, title, artist) {
+  return `${prefix}:${normalizeQuery(title)}|${normalizeQuery(artist)}`;
+}
+
+function getLyricsCache(key) {
+  return lyricsCache.get(key) || null;
+}
+
+function setLyricsCache(key, value) {
+  lyricsCache.set(key, value);
+  if (lyricsCache.size > LYRICS_CACHE_LIMIT) {
+    lyricsCache.delete(lyricsCache.keys().next().value);
+  }
+}
 
 function normalizeQuery(query) {
   return String(query || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -1598,6 +1845,7 @@ const ROUTE_POLICIES = new Map([
   ["/api/user/profile/restore", defineRoutePolicy(["POST"])],
   ["/api/user/favorite", defineRoutePolicy(["POST"])],
   ["/api/user/history", defineRoutePolicy(["POST"])],
+  ["/api/user/listened", defineRoutePolicy(["POST"])],
   ["/api/user/preferences", defineRoutePolicy(["POST"])],
   ["/api/user/settings", defineRoutePolicy(["POST"])],
   ["/api/ai/status", defineRoutePolicy(["GET", "HEAD"])],
@@ -1609,11 +1857,14 @@ const ROUTE_POLICIES = new Map([
   ["/api/previous", defineRoutePolicy(["GET", "POST"], { stateChangingGet: true })],
   ["/api/play", defineRoutePolicy(["POST"])],
   ["/api/queue/shuffle", defineRoutePolicy(["POST"])],
+  ["/api/queue/add", defineRoutePolicy(["POST"])],
   ["/api/queue/remove", defineRoutePolicy(["POST"])],
   ["/api/queue/clear", defineRoutePolicy(["POST"])],
   ["/api/queue/restore", defineRoutePolicy(["POST"])],
   ["/api/library/refresh", defineRoutePolicy(["POST"])],
+  ["/api/library/tracks", defineRoutePolicy(["GET", "HEAD"])],
   ["/api/music/search", defineRoutePolicy(["GET"])],
+  ["/api/music/lyrics", defineRoutePolicy(["GET"])],
   ["/api/music/play", defineRoutePolicy(["POST"])],
   ["/api/music/recommend", defineRoutePolicy(["POST"])],
   ["/api/chat", defineRoutePolicy(["POST"])],
@@ -1794,6 +2045,18 @@ async function handleApi(req, res, url) {
     const body = await getBody(req);
     const played = addHistory(body.track || currentTrack(), body.context || "play");
     return sendJson(res, 200, { ok: true, played, profile: publicProfile() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/user/listened") {
+    try {
+      const body = await getBody(req);
+      const seconds = Math.max(0, Math.min(3600, Math.round(Number(body.seconds) || 0)));
+      userProfile.stats.totalMs += seconds * 1000;
+      saveProfile();
+      return sendJson(res, 200, { ok: true, stats: userProfile.stats });
+    } catch (error) {
+      return sendError(res, error.status || 400, error);
+    }
   }
 
   if (req.method === "POST" && url.pathname === "/api/user/preferences") {
@@ -1995,6 +2258,68 @@ async function handleApi(req, res, url) {
     return sendState(res, { reason: "library-refresh", library });
   }
 
+  if (method === "GET" && url.pathname === "/api/library/tracks") {
+    const tracks = localTracks().map(track => withRuntime(track)).filter(Boolean);
+    return sendJson(res, 200, { ok: true, tracks, count: tracks.length });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/queue/add") {
+    try {
+      const body = await getBody(req);
+      const snapshot = sanitizeTrackSnapshot(body.track);
+      if (!snapshot?.id) throw validationError({ track: "缺少要加入队列的歌曲。" });
+      if (!snapshot.audioUrl) throw validationError({ track: "这首歌没有可播放地址。" });
+      addToQueue(snapshot, false, "library");
+      return sendJson(res, 200, publicState({ reason: "queue-add" }));
+    } catch (error) {
+      return sendError(res, error.status || 400, error);
+    }
+  }
+
+  if (method === "GET" && url.pathname === "/api/music/lyrics") {
+    try {
+      const title = optionalString(url.searchParams.get("title"), "title", { maxLength: 200, label: "歌曲名" });
+      const artist = optionalString(url.searchParams.get("artist"), "artist", { maxLength: 200, label: "歌手" });
+      const trackId = optionalString(url.searchParams.get("trackId"), "trackId", { maxLength: 160, label: "曲目 ID" });
+      if (!title && !trackId) throw validationError({ title: "需要提供歌曲名或曲目 ID。" });
+
+      if (trackId) {
+        const cacheKey = lyricsCacheKey("id", trackId, "");
+        const cachedLocal = getLyricsCache(cacheKey);
+        if (cachedLocal) return sendJson(res, 200, { ok: true, lyrics: cachedLocal });
+        const track = localTracks().find(item => item.id === trackId);
+        if (track && track.source === "local") {
+          const fileName = decodeURIComponent(String(track.audioUrl || "").replace(/^\/music\//, ""));
+          const embedded = flacEmbeddedLyrics(path.join(MUSIC_DIR, fileName));
+          if (embedded) {
+            const value = { text: embedded, synced: /^\[\d{1,2}:\d{1,2}/.test(embedded), source: "embedded" };
+            setLyricsCache(cacheKey, value);
+            return sendJson(res, 200, { ok: true, lyrics: value });
+          }
+          setLyricsCache(cacheKey, NO_LYRICS);
+        }
+      }
+
+      if (title) {
+        const cacheKey = lyricsCacheKey("q", title, artist);
+        const cached = getLyricsCache(cacheKey);
+        if (cached) return sendJson(res, 200, { ok: true, lyrics: cached });
+        try {
+          const lyrics = await searchLrcLib(title, artist);
+          const value = lyrics || NO_LYRICS;
+          setLyricsCache(cacheKey, value);
+          return sendJson(res, 200, { ok: true, lyrics: value });
+        } catch {
+          return sendJson(res, 200, { ok: true, lyrics: NO_LYRICS });
+        }
+      }
+
+      return sendJson(res, 200, { ok: true, lyrics: NO_LYRICS });
+    } catch (error) {
+      return sendError(res, error.status || 400, error);
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/api/music/search") {
     try {
       const q = optionalString(url.searchParams.get("q"), "q", { maxLength: 200, defaultValue: "recommend music", label: "搜索关键词" });
@@ -2030,6 +2355,7 @@ async function handleApi(req, res, url) {
         allowRadio: intent.allowRadio,
         avoidElectronic: intent.avoidElectronic
       });
+      recordSearchQuery(query);
       return sendState(res, { reason: "music-play", musicTrack: track });
     } catch (error) {
       return sendError(res, error.status || 502, error, { ai: aiPublicState() });
@@ -2072,9 +2398,11 @@ async function handleApi(req, res, url) {
           allowRadio: intent.allowRadio,
           avoidElectronic: intent.avoidElectronic
         });
+        recordSearchQuery(query);
         reply = `正在播放：${track.title} - ${track.artist}`;
       } else {
         const tracks = await recommendMusic(text, intent);
+        recordSearchQuery(text);
         reply = `我按你的偏好排了 ${tracks.length} 首：\n\n${tracks
           .map((track, index) => `${index + 1}. ${track.title} - ${track.artist}`)
           .join("\n")}`;
